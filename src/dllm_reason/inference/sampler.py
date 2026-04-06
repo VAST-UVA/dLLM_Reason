@@ -144,10 +144,16 @@ class DiffusionSampler:
             # Don't modify prompt positions
             positions_to_unmask = positions_to_unmask & ~prompt_mask
 
-            # Sample tokens
+            # Sample tokens — exclude mask_token_id so positions can never be
+            # "unmasked" back to the mask token itself.
             if positions_to_unmask.any():
+                probs_sample = probs.clone()
+                probs_sample[..., self.model.mask_token_id] = 0.0
+                # Re-normalise rows that may have become zero-sum
+                row_sums = probs_sample.sum(dim=-1, keepdim=True).clamp(min=1e-9)
+                probs_sample = probs_sample / row_sums
                 sampled = torch.multinomial(
-                    probs.view(-1, probs.shape[-1]), num_samples=1
+                    probs_sample.view(-1, probs_sample.shape[-1]), num_samples=1
                 ).view(batch_size, seq_len)
                 x_t = torch.where(positions_to_unmask, sampled, x_t)
                 is_unmasked = is_unmasked | positions_to_unmask
@@ -155,15 +161,16 @@ class DiffusionSampler:
             if cfg.record_trajectory:
                 trajectory.append(x_t.clone())
 
-        # Final: unmask any remaining masked positions
+        # Final: force-unmask any remaining masked positions with greedy argmax.
+        # Using argmax (not multinomial) and excluding mask_token_id guarantees
+        # no mask tokens survive into the decoded output.
         remaining_mask = (x_t == self.model.mask_token_id) & ~prompt_mask
         if remaining_mask.any():
             t = torch.full((batch_size,), 0.0, device=device)
             output = self.model.forward(x_t, t)
-            probs = torch.softmax(output.logits / cfg.temperature, dim=-1)
-            sampled = torch.multinomial(
-                probs.view(-1, probs.shape[-1]), num_samples=1
-            ).view(batch_size, seq_len)
+            final_logits = output.logits.clone()
+            final_logits[..., self.model.mask_token_id] = -float("inf")
+            sampled = final_logits.argmax(dim=-1)
             x_t = torch.where(remaining_mask, sampled, x_t)
 
         return SamplingResult(sequences=x_t, trajectory=trajectory)
