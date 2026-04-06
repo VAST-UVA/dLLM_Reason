@@ -170,9 +170,13 @@ class DiffusionLM(nn.Module, abc.ABC):
 
                 # Get model predictions
                 output = self.forward(x_t, t)
-                logits = output.logits  # (batch, seq_len, vocab_size)
+                logits = output.logits.clone()  # (batch, seq_len, vocab_size)
 
-                # Compute confidences
+                # Suppress mask token so it can never be sampled as output
+                if self.mask_token_id < logits.shape[-1]:
+                    logits[..., self.mask_token_id] = -float("inf")
+
+                # Compute confidences from clean distribution
                 probs = torch.softmax(logits / temperature, dim=-1)
                 confidences = probs.max(dim=-1).values  # (batch, seq_len)
 
@@ -191,12 +195,9 @@ class DiffusionLM(nn.Module, abc.ABC):
 
                 # Sample tokens for selected positions
                 if positions_to_unmask.any():
-                    # For each selected position, sample from the predicted distribution
                     sampled = torch.multinomial(
                         probs.view(-1, probs.shape[-1]), num_samples=1
                     ).view(batch_size, seq_len)
-
-                    # Only update selected positions
                     x_t = torch.where(positions_to_unmask, sampled, x_t)
                     is_unmasked = is_unmasked | positions_to_unmask
 

@@ -97,6 +97,8 @@ class DiffusionSampler:
         if cfg.show_progress:
             steps = tqdm(steps, desc="Sampling", leave=False)
 
+        mask_id = self.model.mask_token_id
+
         for step in steps:
             # Timestep: from ~1 (noisy) to ~0 (clean)
             t_val = 1.0 - step / cfg.num_steps
@@ -104,7 +106,14 @@ class DiffusionSampler:
 
             # Model forward
             output = self.model.forward(x_t, t)
-            logits = output.logits
+            logits = output.logits  # (B, L, V)
+
+            # ── Suppress mask token BEFORE any probability computation ──────
+            # LLaDA's mask token logit is often the highest value; if left in,
+            # every position samples back to [MASK] and nothing ever unmasks.
+            logits = logits.clone()
+            if mask_id < logits.shape[-1]:
+                logits[..., mask_id] = -float("inf")
 
             # Apply temperature
             if cfg.temperature != 1.0:
@@ -121,17 +130,16 @@ class DiffusionSampler:
             if cfg.top_p < 1.0:
                 sorted_logits, sorted_indices = logits.sort(dim=-1, descending=True)
                 cum_probs = sorted_logits.softmax(dim=-1).cumsum(dim=-1)
-                mask = cum_probs - sorted_logits.softmax(dim=-1) >= cfg.top_p
-                sorted_logits[mask] = -float("inf")
-                # Unsort
+                nucleus_mask = cum_probs - sorted_logits.softmax(dim=-1) >= cfg.top_p
+                sorted_logits[nucleus_mask] = -float("inf")
                 logits = sorted_logits.scatter(-1, sorted_indices, sorted_logits)
 
-            # Compute probabilities and confidence
+            # Probabilities and per-position confidence (mask token already excluded)
             probs = torch.softmax(logits, dim=-1)
-            confidences = probs.max(dim=-1).values
+            confidences = probs.max(dim=-1).values  # (B, L)
 
             # Ask scheduler which positions to unmask
-            current_mask = (x_t == self.model.mask_token_id) & ~prompt_mask
+            current_mask = (x_t == mask_id) & ~prompt_mask
             positions_to_unmask = self.scheduler.select_positions(
                 step=step,
                 total_steps=cfg.num_steps,
@@ -144,16 +152,9 @@ class DiffusionSampler:
             # Don't modify prompt positions
             positions_to_unmask = positions_to_unmask & ~prompt_mask
 
-            # Sample tokens — exclude mask_token_id so positions can never be
-            # "unmasked" back to the mask token itself.
             if positions_to_unmask.any():
-                probs_sample = probs.clone()
-                probs_sample[..., self.model.mask_token_id] = 0.0
-                # Re-normalise rows that may have become zero-sum
-                row_sums = probs_sample.sum(dim=-1, keepdim=True).clamp(min=1e-9)
-                probs_sample = probs_sample / row_sums
                 sampled = torch.multinomial(
-                    probs_sample.view(-1, probs_sample.shape[-1]), num_samples=1
+                    probs.view(-1, probs.shape[-1]), num_samples=1
                 ).view(batch_size, seq_len)
                 x_t = torch.where(positions_to_unmask, sampled, x_t)
                 is_unmasked = is_unmasked | positions_to_unmask
