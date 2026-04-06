@@ -133,14 +133,19 @@ class MBPPEvaluator(BenchmarkEvaluator):
             # Log failures immediately so problems are visible in real time
             if passed == 0:
                 detail = sample_details[0]
+                # Always show what code was actually extracted, so mismatched
+                # function names / empty extractions are immediately visible.
+                logger.warning(
+                    f"[MBPP {task_id}] FAILED\n"
+                    f"  extracted_code: {detail['extracted_code'][:300]!r}\n"
+                    f"  raw_output:     {detail['raw_output'][:200]!r}"
+                )
                 if detail["timed_out"]:
                     logger.warning(f"[MBPP {task_id}] TIMEOUT")
                 elif detail["stderr"]:
                     logger.warning(f"[MBPP {task_id}] STDERR: {detail['stderr'][:300]}")
                 elif detail["error"]:
                     logger.warning(f"[MBPP {task_id}] ERROR: {detail['error']}")
-                else:
-                    logger.debug(f"[MBPP {task_id}] raw_output[:200]: {generated[:200]}")
 
             results.append({
                 "task_id": task_id,
@@ -282,14 +287,17 @@ class HumanEvalEvaluator(BenchmarkEvaluator):
             # Log failures immediately
             if passed == 0:
                 detail = sample_details[0]
+                logger.warning(
+                    f"[HumanEval {task_id}] FAILED\n"
+                    f"  extracted_completion: {detail['extracted_completion'][:300]!r}\n"
+                    f"  raw_output:           {detail['raw_output'][:200]!r}"
+                )
                 if detail["timed_out"]:
                     logger.warning(f"[HumanEval {task_id}] TIMEOUT")
                 elif detail["stderr"]:
                     logger.warning(f"[HumanEval {task_id}] STDERR: {detail['stderr'][:300]}")
                 elif detail["error"]:
                     logger.warning(f"[HumanEval {task_id}] ERROR: {detail['error']}")
-                else:
-                    logger.debug(f"[HumanEval {task_id}] raw_output[:200]: {generated[:200]}")
 
             results.append({
                 "task_id": task_id,
