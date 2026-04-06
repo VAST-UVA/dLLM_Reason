@@ -250,28 +250,39 @@ class LLaDAWrapper(DiffusionLM):
         prompt_len = prompt_mask[0].sum().item()
         gen_ids = result.sequences[0, prompt_len:]
 
-        # ── Diagnostics ────────────────────────────────────────────────────────
-        n_mask = (gen_ids == self.mask_token_id).sum().item()
-        n_total = gen_ids.shape[0]
+        # ── Safety net: force-fill any surviving mask tokens ───────────────────
+        # sampler.py already excludes mask_token_id from sampling, but as a
+        # belt-and-suspenders guard we do one argmax forward pass here.
+        still_masked = (gen_ids == self.mask_token_id)
+        n_mask = still_masked.sum().item()
         if n_mask > 0:
             logger.warning(
-                f"generate(): {n_mask}/{n_total} generation tokens are still "
-                f"[MASK] after sampling — they will be stripped by decode(). "
-                f"Scheduler: {type(self.scheduler if hasattr(self, 'scheduler') else scheduler).__name__}, "
-                f"num_steps={num_steps}, generation_len={generation_len}"
+                f"generate(): {n_mask}/{gen_ids.shape[0]} mask tokens survived "
+                f"sampling — force-filling with argmax (num_steps={num_steps})"
             )
+            full_ids = result.sequences[0:1]          # (1, total_len)
+            with torch.no_grad():
+                out = self.forward(
+                    full_ids,
+                    torch.zeros(1, device=full_ids.device),
+                )
+            fix_logits = out.logits[0, prompt_len:].clone()   # (gen_len, vocab)
+            fix_logits[:, self.mask_token_id] = -float("inf")
+            best_ids = fix_logits.argmax(dim=-1)
+            gen_ids = torch.where(still_masked, best_ids, gen_ids)
+
         logger.debug(
-            f"generate(): prompt_len={prompt_len}, gen_len={n_total}, "
-            f"masked_remaining={n_mask}, "
-            f"gen_ids[:20]={gen_ids[:20].tolist()}"
+            f"generate(): prompt_len={prompt_len}, gen_len={gen_ids.shape[0]}, "
+            f"mask_remaining={n_mask}, gen_ids[:20]={gen_ids[:20].tolist()}"
         )
         # ───────────────────────────────────────────────────────────────────────
 
+        # Decode — skip only padding/EOS, not the mask token (already removed).
         generated_text = self.tokenizer.decode(gen_ids, skip_special_tokens=True)
 
         if not generated_text.strip():
             logger.warning(
-                f"generate(): decoded output is empty. "
+                f"generate(): decoded output is still empty after safety-net fix. "
                 f"mask_token_id={self.mask_token_id}, "
                 f"unique gen token ids={gen_ids.unique().tolist()}"
             )
