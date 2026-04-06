@@ -25,6 +25,7 @@ Thumbs.db
 # Project artifacts
 results/
 figures/
+.claude
 *.db
 *.faiss
 wandb/
