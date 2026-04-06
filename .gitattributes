@@ -1,0 +1,15 @@
+# Force LF line endings for shell scripts on all platforms.
+# This prevents Windows core.autocrlf=true from converting LF→CRLF on checkout,
+# which would break bash execution on Linux/Mac servers.
+*.sh text eol=lf
+
+# Python and YAML files: normalize to LF in the repo, use platform endings on checkout
+*.py  text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Binary files: no line-ending conversion
+*.png binary
+*.jpg binary
+*.pt  binary
+*.bin binary
