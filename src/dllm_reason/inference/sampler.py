@@ -147,7 +147,7 @@ class DiffusionSampler:
             # Sample tokens
             if positions_to_unmask.any():
                 sampled = torch.multinomial(
-                    probs.view(-1, self.model.vocab_size), num_samples=1
+                    probs.view(-1, probs.shape[-1]), num_samples=1
                 ).view(batch_size, seq_len)
                 x_t = torch.where(positions_to_unmask, sampled, x_t)
                 is_unmasked = is_unmasked | positions_to_unmask
@@ -162,7 +162,7 @@ class DiffusionSampler:
             output = self.model.forward(x_t, t)
             probs = torch.softmax(output.logits / cfg.temperature, dim=-1)
             sampled = torch.multinomial(
-                probs.view(-1, self.model.vocab_size), num_samples=1
+                probs.view(-1, probs.shape[-1]), num_samples=1
             ).view(batch_size, seq_len)
             x_t = torch.where(remaining_mask, sampled, x_t)
 

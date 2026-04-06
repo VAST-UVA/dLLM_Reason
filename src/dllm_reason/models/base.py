@@ -193,7 +193,7 @@ class DiffusionLM(nn.Module, abc.ABC):
                 if positions_to_unmask.any():
                     # For each selected position, sample from the predicted distribution
                     sampled = torch.multinomial(
-                        probs.view(-1, self.vocab_size), num_samples=1
+                        probs.view(-1, probs.shape[-1]), num_samples=1
                     ).view(batch_size, seq_len)
 
                     # Only update selected positions

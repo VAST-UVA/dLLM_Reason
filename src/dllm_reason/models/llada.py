@@ -79,6 +79,11 @@ class LLaDAWrapper(DiffusionLM):
         )
         logger.info("LLaDA model loaded.")
 
+        # Sync vocab_size with model's actual output dimension
+        # (may differ from len(tokenizer) due to padding for GPU alignment)
+        if hasattr(self._llada, "config") and hasattr(self._llada.config, "vocab_size"):
+            self.vocab_size = self._llada.config.vocab_size
+
         # Freeze by default — we only use it for inference
         for p in self._llada.parameters():
             p.requires_grad = False

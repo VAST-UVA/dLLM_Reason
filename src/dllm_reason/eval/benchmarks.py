@@ -97,7 +97,7 @@ class MBPPEvaluator(BenchmarkEvaluator):
         results = []
         for item in tqdm(items, desc="MBPP"):
             task_id = item.get("task_id", item.get("source_file", str(len(results))))
-            prompt = item["text"]
+            prompt = item["prompt"]
             test_list = item["test_list"]
             canonical = item["code"]
 
