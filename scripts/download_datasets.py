@@ -110,6 +110,10 @@ def parse_args():
         "--list", action="store_true",
         help="List available datasets and exit.",
     )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Re-download even if the dataset split already exists on disk.",
+    )
     return parser.parse_args()
 
 
@@ -119,14 +123,37 @@ def setup_mirror(mirror_url: str):
     print(f"Using mirror: {mirror_url}")
 
 
-def download_dataset(name: str, info: dict, output_dir: Path, token: str = None):
-    """Download a dataset via HuggingFace datasets library."""
+def split_exists(split_dir: Path) -> bool:
+    """Return True if a split was already saved by save_to_disk()."""
+    return (split_dir / "dataset_info.json").exists()
+
+
+def download_dataset(name: str, info: dict, output_dir: Path,
+                     token: str = None, force: bool = False):
+    """Download a dataset via HuggingFace datasets library.
+
+    Skips any split whose target directory already contains a valid
+    save_to_disk() snapshot (i.e. has dataset_info.json).
+    Pass force=True to re-download regardless.
+    """
     from datasets import load_dataset
 
-    print(f"\nDownloading {name} ({info['repo_id']})...")
     save_dir = output_dir / name
-
+    splits_needed = []
     for split in info["splits"]:
+        split_dir = save_dir / split
+        if not force and split_exists(split_dir):
+            print(f"  [skip] {name}/{split} already exists at {split_dir}")
+        else:
+            splits_needed.append(split)
+
+    if not splits_needed:
+        print(f"[skip] {name} — all splits already downloaded")
+        return
+
+    print(f"\nDownloading {name} ({info['repo_id']}) — splits: {', '.join(splits_needed)} ...")
+
+    for split in splits_needed:
         try:
             kwargs = {"split": split}
             if info.get("config"):
@@ -184,7 +211,7 @@ def main():
     success, failed = [], []
     for name in dataset_names:
         try:
-            download_dataset(name, DATASETS[name], output_dir, token)
+            download_dataset(name, DATASETS[name], output_dir, token, force=args.force)
             success.append(name)
         except Exception as e:
             print(f"Error downloading {name}: {e}")
