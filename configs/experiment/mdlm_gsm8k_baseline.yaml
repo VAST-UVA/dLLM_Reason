@@ -1,0 +1,23 @@
+# Baseline experiment: MDLM on GSM8K with all scheduler variants
+experiment: mdlm_gsm8k_baseline
+model: mdlm
+task: gsm8k
+schedulers:
+  - random
+  - confidence
+  - linear
+  - cot
+  - skeleton
+  - bidirectional
+
+training:
+  lr: 1.0e-4
+  batch_size: 32
+  max_steps: 50000
+  warmup_steps: 1000
+
+inference:
+  num_steps: 64
+  temperature: 0.7
+
+output_dir: results/mdlm_gsm8k_baseline

@@ -1,0 +1,17 @@
+benchmark: mmlu
+num_samples: 1000
+max_new_tokens: 16
+num_steps: 32
+temperature: 0.0
+cot_steps: 2
+mmlu_subjects:
+  - abstract_algebra
+  - anatomy
+  - astronomy
+  - college_computer_science
+  - college_mathematics
+  - high_school_mathematics
+  - high_school_physics
+  - logical_fallacies
+  - machine_learning
+  - moral_scenarios

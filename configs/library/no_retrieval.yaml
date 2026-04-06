@@ -1,0 +1,27 @@
+# Ablation: library storage + feedback only, no retrieval
+library:
+  enabled: true
+
+  store:
+    db_path: dag_library.db
+
+  retrieval:
+    enabled: false
+
+  fusion:
+    enabled: false
+
+  feedback:
+    enabled: true
+    sources: [auto]
+
+  constraint:
+    mode: none
+
+  merge:
+    enabled: false
+
+  fitness:
+    accuracy_weight: 1.0
+    human_weight: 0.0
+    structural_weight: 0.0

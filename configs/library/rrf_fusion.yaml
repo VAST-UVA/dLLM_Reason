@@ -1,0 +1,34 @@
+# Ablation: RRF fusion instead of weighted fusion
+library:
+  enabled: true
+
+  store:
+    db_path: dag_library.db
+    embedding_dim: 384
+
+  retrieval:
+    enabled: true
+    channels: [semantic, structural, performance]
+    top_k: 5
+
+  fusion:
+    enabled: true
+    strategy: rrf
+    rrf_k: 60
+
+  feedback:
+    enabled: true
+    sources: [auto, elo]
+
+  constraint:
+    mode: hard
+
+  merge:
+    enabled: true
+    strategy: weighted
+    weighted_threshold: 0.5
+
+  fitness:
+    accuracy_weight: 0.5
+    human_weight: 0.3
+    structural_weight: 0.2

@@ -1,0 +1,3 @@
+# Ablation: library completely disabled — baseline without library
+library:
+  enabled: false

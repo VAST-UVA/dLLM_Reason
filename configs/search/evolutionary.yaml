@@ -1,0 +1,10 @@
+name: evolutionary
+method: evolutionary
+budget: 200
+population_size: 20
+elite_fraction: 0.2
+mutation_rate: 0.3
+crossover_rate: 0.5
+initial_dag: cot
+fitness: accuracy
+fitness_samples: 50

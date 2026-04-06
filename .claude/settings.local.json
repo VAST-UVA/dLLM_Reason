@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /d/workspace/dLLM_Reason -name \"*.py\" -type f -exec wc -l {} +)"
+    ]
+  }
+}

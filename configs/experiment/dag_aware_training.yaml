@@ -1,0 +1,22 @@
+# DAG-aware training experiment: compare standard vs DAG-biased masking
+experiment: dag_aware_training
+model: mdlm
+task: gsm8k
+
+training:
+  mode: pretrain
+  lr: 1.0e-4
+  batch_size: 32
+  max_steps: 50000
+  dag_aware: true
+  dag_type: cot
+  dag_cot_steps: 4
+  dag_bias_strength: 0.5
+
+inference:
+  num_steps: 64
+  schedulers:
+    - confidence
+    - cot
+
+output_dir: results/dag_aware_training

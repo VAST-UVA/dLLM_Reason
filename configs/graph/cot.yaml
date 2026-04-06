@@ -1,0 +1,5 @@
+name: cot
+description: Chain-of-Thought — partitions generation into sequential reasoning steps
+type: chain_of_thought
+num_steps: 4
+sub_strategy: confidence_topk

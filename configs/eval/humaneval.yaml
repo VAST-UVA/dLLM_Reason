@@ -1,0 +1,6 @@
+benchmark: humaneval
+num_samples: 164     # full HumanEval
+max_new_tokens: 512
+num_steps: 128
+temperature: 0.0
+cot_steps: 4

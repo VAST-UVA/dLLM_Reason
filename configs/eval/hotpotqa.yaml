@@ -1,0 +1,6 @@
+benchmark: hotpotqa
+num_samples: 500
+max_new_tokens: 128
+num_steps: 64
+temperature: 0.0
+cot_steps: 3

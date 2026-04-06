@@ -1,0 +1,5 @@
+name: skeleton
+description: Skeleton-then-detail — structural tokens first, then fill details
+type: skeleton_then_detail
+skeleton_stride: 3
+sub_strategy: confidence_topk

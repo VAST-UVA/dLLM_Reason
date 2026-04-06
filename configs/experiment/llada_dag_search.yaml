@@ -1,0 +1,17 @@
+# DAG search experiment: LLaDA with evolutionary search on GSM8K
+experiment: llada_dag_search
+model: llada
+task: gsm8k
+
+search:
+  method: evolutionary
+  budget: 200
+  population_size: 20
+  fitness: accuracy
+  fitness_samples: 50
+
+inference:
+  num_steps: 128
+  temperature: 0.0
+
+output_dir: results/llada_dag_search

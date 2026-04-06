@@ -1,0 +1,7 @@
+name: sedd
+dim: 768
+num_layers: 12
+num_heads: 12
+max_seq_len: 512
+dropout: 0.1
+noise_schedule: log_linear

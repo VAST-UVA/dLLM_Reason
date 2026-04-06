@@ -1,0 +1,38 @@
+# Ablation: no Elo rating — only auto (benchmark) feedback
+library:
+  enabled: true
+
+  store:
+    db_path: dag_library.db
+    embedding_dim: 384
+
+  retrieval:
+    enabled: true
+    channels: [semantic, structural, performance]
+    top_k: 5
+
+  fusion:
+    enabled: true
+    strategy: weighted
+    channel_weights:
+      semantic: 0.5
+      structural: 0.3
+      performance: 0.2
+
+  feedback:
+    enabled: true
+    sources: [auto]
+    auto_metric: accuracy
+
+  constraint:
+    mode: hard
+
+  merge:
+    enabled: true
+    strategy: weighted
+    weighted_threshold: 0.5
+
+  fitness:
+    accuracy_weight: 0.7
+    human_weight: 0.0
+    structural_weight: 0.3

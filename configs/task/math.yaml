@@ -1,0 +1,8 @@
+name: math
+dataset: math
+split: test
+max_seq_len: 1024
+generation_len: 512
+num_samples: 500
+metric: exact_match
+answer_format: expression

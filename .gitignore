@@ -1,0 +1,30 @@
+# Data & models (downloaded separately)
+checkpoints/
+datasets/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Environment
+venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project artifacts
+results/
+figures/
+*.db
+*.faiss
+wandb/

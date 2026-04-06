@@ -1,0 +1,32 @@
+# Ablation: semantic retrieval only (no structural, no performance channel)
+library:
+  enabled: true
+
+  store:
+    db_path: dag_library.db
+    embedding_dim: 384
+
+  retrieval:
+    enabled: true
+    channels: [semantic]
+    top_k: 5
+    semantic_model: all-MiniLM-L6-v2
+
+  fusion:
+    enabled: false
+    strategy: none
+
+  feedback:
+    enabled: true
+    sources: [auto]
+
+  constraint:
+    mode: hard
+
+  merge:
+    enabled: false
+
+  fitness:
+    accuracy_weight: 1.0
+    human_weight: 0.0
+    structural_weight: 0.0

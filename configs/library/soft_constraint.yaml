@@ -1,0 +1,38 @@
+# Ablation: soft constraints instead of hard DAG enforcement
+library:
+  enabled: true
+
+  store:
+    db_path: dag_library.db
+    embedding_dim: 384
+
+  retrieval:
+    enabled: true
+    channels: [semantic, structural, performance]
+    top_k: 5
+
+  fusion:
+    enabled: true
+    strategy: weighted
+    channel_weights:
+      semantic: 0.5
+      structural: 0.3
+      performance: 0.2
+
+  feedback:
+    enabled: true
+    sources: [auto, elo]
+
+  constraint:
+    mode: soft
+    soft_penalty_weight: 0.1
+
+  merge:
+    enabled: true
+    strategy: weighted
+    weighted_threshold: 0.5
+
+  fitness:
+    accuracy_weight: 0.5
+    human_weight: 0.3
+    structural_weight: 0.2

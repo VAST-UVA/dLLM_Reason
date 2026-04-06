@@ -1,0 +1,8 @@
+name: greedy
+method: greedy
+budget: 100
+num_candidates: 10
+patience: 5
+initial_dag: empty
+fitness: accuracy
+fitness_samples: 50

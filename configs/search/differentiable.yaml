@@ -1,0 +1,11 @@
+name: differentiable
+method: differentiable
+budget: 200
+lr: 1.0e-3
+lambda_init: 0.0
+rho_init: 1.0
+rho_max: 1.0e16
+h_tol: 1.0e-8
+rho_multiply: 10.0
+fitness: accuracy
+fitness_samples: 50

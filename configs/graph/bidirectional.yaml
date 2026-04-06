@@ -1,0 +1,5 @@
+name: bidirectional
+description: Unmask from both ends toward the middle
+type: bidirectional
+num_segments: 4
+sub_strategy: confidence_topk

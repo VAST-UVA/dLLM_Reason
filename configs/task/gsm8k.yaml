@@ -1,0 +1,8 @@
+name: gsm8k
+dataset: gsm8k
+split: test
+max_seq_len: 512
+generation_len: 256
+num_samples: null   # null = all
+metric: exact_match
+answer_format: number

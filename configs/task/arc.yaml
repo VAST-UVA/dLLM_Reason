@@ -1,0 +1,9 @@
+name: arc
+dataset: arc
+split: test
+challenge: true
+max_seq_len: 512
+generation_len: 32
+num_samples: null
+metric: accuracy
+answer_format: multiple_choice

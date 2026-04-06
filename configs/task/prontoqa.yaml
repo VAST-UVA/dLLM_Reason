@@ -1,0 +1,8 @@
+name: prontoqa
+dataset: prontoqa
+split: test
+max_seq_len: 512
+generation_len: 64
+num_samples: null
+metric: exact_match
+answer_format: text

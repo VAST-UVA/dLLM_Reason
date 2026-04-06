@@ -1,0 +1,9 @@
+name: rl_policy
+method: rl_policy
+budget: 300
+hidden_dim: 128
+lr: 1.0e-4
+max_edges_per_dag: 50
+baseline_ema: 0.9
+fitness: accuracy
+fitness_samples: 30

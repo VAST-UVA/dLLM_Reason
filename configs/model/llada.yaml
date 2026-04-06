@@ -1,0 +1,6 @@
+name: llada
+model_id: GSAI-ML/LLaDA-8B-Instruct
+max_seq_len: 1024
+torch_dtype: bfloat16
+device_map: auto
+trust_remote_code: true

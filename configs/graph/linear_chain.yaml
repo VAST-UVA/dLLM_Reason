@@ -1,0 +1,3 @@
+name: linear_chain
+description: Left-to-right chain — mimics autoregressive order
+type: linear_chain
