@@ -97,7 +97,7 @@ class MBPPEvaluator(BenchmarkEvaluator):
         results = []
         for item in tqdm(items, desc="MBPP"):
             task_id = item.get("task_id", item.get("source_file", str(len(results))))
-            prompt = item["prompt"]
+            prompt = item.get("prompt", item.get("text", ""))
             test_list = item["test_list"]
             canonical = item["code"]
 
@@ -107,7 +107,15 @@ class MBPPEvaluator(BenchmarkEvaluator):
 
             for _ in range(n_samples):
                 generated = self._generate(prompt, self.SYSTEM_PROMPT)
-                code = self._extract_code(generated)
+                code = _extract_code(generated)
+
+                # Diagnostic: log first few
+                if len(results) < 3:
+                    logger.info(
+                        f"MBPP #{task_id} raw output ({len(generated)} chars):\n"
+                        f"{generated[:500]}\n---extracted---\n{code[:500]}"
+                    )
+
                 if self._run_tests(code, test_list):
                     passed += 1
 
@@ -128,18 +136,6 @@ class MBPPEvaluator(BenchmarkEvaluator):
             "per_problem": results,
         }
 
-    def _extract_code(self, text: str) -> str:
-        """Extract Python code from model output."""
-        # Try to find code block
-        code_block = re.search(r"```python\n(.*?)```", text, re.DOTALL)
-        if code_block:
-            return code_block.group(1)
-        code_block = re.search(r"```\n(.*?)```", text, re.DOTALL)
-        if code_block:
-            return code_block.group(1)
-        # Assume the whole output is code
-        return text
-
     def _run_tests(self, code: str, tests: list[str], timeout: int = 10) -> bool:
         """Execute code + tests in a subprocess, return True if all pass."""
         test_code = "\n".join(tests)
@@ -158,11 +154,16 @@ class MBPPEvaluator(BenchmarkEvaluator):
                 text=True,
                 timeout=timeout,
             )
+            if result.returncode != 0 and len(self._logged_errors) < 3:
+                self._logged_errors += 1
+                logger.debug(f"Test failed: stderr={result.stderr[:300]}")
             return result.returncode == 0
         except (subprocess.TimeoutExpired, Exception):
             return False
         finally:
             Path(tmp_path).unlink(missing_ok=True)
+
+    _logged_errors = 0
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -202,8 +203,16 @@ class HumanEvalEvaluator(BenchmarkEvaluator):
 
             for _ in range(n_samples):
                 generated = self._generate(prompt, self.SYSTEM_PROMPT)
-                # Prepend the original prompt (function signature)
-                full_code = prompt + self._extract_completion(generated, prompt)
+                completion = self._extract_completion(generated, prompt)
+                full_code = prompt + completion
+
+                # Diagnostic: log first few
+                if len(results) < 3:
+                    logger.info(
+                        f"HumanEval {task_id} raw output ({len(generated)} chars):\n"
+                        f"{generated[:500]}\n---completion---\n{completion[:500]}"
+                    )
+
                 if self._run_humaneval_test(full_code, test, entry_point):
                     passed += 1
 
@@ -225,15 +234,20 @@ class HumanEvalEvaluator(BenchmarkEvaluator):
         }
 
     def _extract_completion(self, generated: str, prompt: str) -> str:
-        """Extract the function body from generated text."""
-        # Remove the prompt if echoed
+        """Extract the function body from generated text.
+
+        Handles both:
+        - Chat-style output (markdown code blocks)
+        - dLLM raw output (plain text with code)
+        """
+        # 1. Remove the prompt if the model echoed it
         if generated.startswith(prompt):
             return generated[len(prompt):]
-        # Extract code block
+
+        # 2. Try markdown code blocks (chat models)
         code_block = re.search(r"```python\n(.*?)```", generated, re.DOTALL)
         if code_block:
             code = code_block.group(1)
-            # Remove the function definition if present
             if "def " in code:
                 lines = code.split("\n")
                 body_lines = []
@@ -246,7 +260,43 @@ class HumanEvalEvaluator(BenchmarkEvaluator):
                         body_lines.append(line)
                 return "\n".join(body_lines)
             return code
-        return generated
+
+        # 3. dLLM raw output: extract code-like content
+        code = _extract_code(generated)
+
+        # If the extracted code redefines the function, extract just the body
+        if "def " in code:
+            lines = code.split("\n")
+            body_lines = []
+            in_body = False
+            indent_level = 0
+            for line in lines:
+                stripped = line.lstrip()
+                if stripped.startswith("def "):
+                    in_body = True
+                    indent_level = len(line) - len(stripped)
+                    continue
+                if in_body:
+                    # Stop at next top-level def or class
+                    if stripped and not line[0].isspace() and not stripped.startswith("#"):
+                        if stripped.startswith("def ") or stripped.startswith("class "):
+                            break
+                    body_lines.append(line)
+            if body_lines:
+                return "\n".join(body_lines)
+
+        # 4. Assume the whole output is the function body — indent it
+        lines = generated.strip().split("\n")
+        indented = []
+        for line in lines:
+            if line.strip():
+                # Add indent if missing
+                if not line.startswith(" ") and not line.startswith("\t"):
+                    line = "    " + line
+                indented.append(line)
+            else:
+                indented.append(line)
+        return "\n".join(indented)
 
     def _run_humaneval_test(self, solution: str, test: str, entry_point: str, timeout: int = 10) -> bool:
         full_code = f"{solution}\n\n{test}\n\ncheck({entry_point})\n"
@@ -259,11 +309,16 @@ class HumanEvalEvaluator(BenchmarkEvaluator):
                 [sys.executable, tmp_path],
                 capture_output=True, text=True, timeout=timeout,
             )
+            if result.returncode != 0 and len(self._logged_errors) < 3:
+                self._logged_errors += 1
+                logger.debug(f"Test failed: stderr={result.stderr[:300]}")
             return result.returncode == 0
         except Exception:
             return False
         finally:
             Path(tmp_path).unlink(missing_ok=True)
+
+    _logged_errors = 0
 
 
 # ──────────────────────────────────────────────────────────────────────────────
