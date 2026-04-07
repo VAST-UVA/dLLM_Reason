@@ -138,10 +138,18 @@ class DiffusionSampler:
                 print(f"  raw  top-5  (before suppress) : {_raw_logits[0,_pl].topk(5).indices.tolist()}")
                 print(f"  logit[mask_id] before         : {_raw_logits[0,_pl,mask_id].item():.3f}")
                 print(f"  logit[mask_id] after          : {logits[0,_pl,mask_id].item()}")
+                _top5_after = logits[0,_pl].topk(5).indices.tolist()
                 print(f"  post-suppress argmax          : {logits[0,_pl].argmax().item()}")
-                print(f"  post-suppress top-5           : {logits[0,_pl].topk(5).indices.tolist()}")
+                print(f"  post-suppress top-5           : {_top5_after}")
                 print(f"  raw_probs argmax              : {raw_probs[0,_pl].argmax().item()}")
                 print(f"  raw_probs[mask_id]            : {raw_probs[0,_pl,mask_id].item():.6f}")
+                # Decode top-5 tokens so we can see what they actually are
+                _tok = getattr(self.model, "tokenizer", None)
+                if _tok is not None:
+                    _raw_top5 = _raw_logits[0,_pl].topk(5).indices.tolist()
+                    print(f"  top-5 decoded (before)        : {[repr(_tok.decode([t])) for t in _raw_top5]}")
+                    print(f"  top-5 decoded (after)         : {[repr(_tok.decode([t])) for t in _top5_after]}")
+                    print(f"  mask_id={mask_id} decoded     : {repr(_tok.decode([mask_id]))}")
                 print(f"================================\n")
             # ─────────────────────────────────────────────────────────────────
 
