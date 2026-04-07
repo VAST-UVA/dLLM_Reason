@@ -14,14 +14,39 @@ Model Layer          Scheduler Layer         DAG Layer
 MDLM|SEDD|D3PM|LLaDA   DAGScheduler          TokenDAG + Templates
 ```
 
-## Quick Start
+## Installation
+
+### From GitHub (recommended)
 
 ```bash
-# Install
+# Full install with all optional extras
+pip install "dllm-reason[dev,library] @ git+https://github.com/BDeMo/dLLM_Reason.git"
+
+# Core only (no FAISS / sentence-transformers)
+pip install "git+https://github.com/BDeMo/dLLM_Reason.git"
+```
+
+### Editable (development)
+
+```bash
 git clone https://github.com/BDeMo/dLLM_Reason.git
 cd dLLM_Reason
 pip install -e ".[dev,library]"
+```
 
+After installation the following CLI commands are available globally:
+
+| Command | Equivalent |
+|---------|-----------|
+| `dllm-eval-dags` | `python scripts/eval_dags.py` |
+| `dllm-train` | `python scripts/train.py` |
+| `dllm-eval` | `python scripts/evaluate.py` |
+| `dllm-search` | `python scripts/search_dag.py` |
+| `dllm-viz` | `python scripts/visualize_dag.py` |
+
+### Quick Start
+
+```bash
 # Download models & datasets
 python scripts/download_models.py              # -> checkpoints/llada-instruct/
 python scripts/download_datasets.py            # -> datasets/
