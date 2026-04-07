@@ -104,7 +104,7 @@ Results go to `results/all_strategies_<timestamp>/`.
 
 ```bash
 python scripts/eval_dags.py \
-    --dags confidence random linear empty cot skeleton bidirectional answer_first \
+    --dags confidence random linear cot skeleton bidirectional answer_first \
     --output_dir results/all_strategies_$(date +%Y%m%d_%H%M%S)
 ```
 
@@ -112,7 +112,7 @@ python scripts/eval_dags.py \
 
 ```bash
 dllm-eval-dags \
-    --dags confidence random linear empty cot skeleton bidirectional answer_first \
+    --dags confidence random linear cot skeleton bidirectional answer_first \
     --output_dir results/all_strategies
 ```
 
@@ -157,9 +157,8 @@ All flags below override the corresponding key in `configs/eval_default.yaml`.
 | Strategy | Description |
 |----------|-------------|
 | `confidence` | Unmask tokens in order of model confidence (highest first) |
-| `random` | Uniformly random unmasking order |
+| `random` | Uniformly random unmasking order (no DAG constraint, LLaDA baseline) |
 | `linear` | Left-to-right sequential unmasking |
-| `empty` | No DAG constraint (standard LLaDA baseline) |
 | `cot` | Chain-of-thought segments: reasoning blocks before answer |
 | `skeleton` | Sketch key tokens first, then fill in details |
 | `bidirectional` | Alternates from both ends toward the center |
@@ -189,7 +188,7 @@ All flags below override the corresponding key in `configs/eval_default.yaml`.
 
 ```bash
 python scripts/eval_dags.py \
-    --dags confidence random linear empty cot skeleton bidirectional answer_first \
+    --dags confidence random linear cot skeleton bidirectional answer_first \
     --save_outputs \
     --output_dir results/all_with_outputs
 ```
@@ -279,7 +278,7 @@ results/all_strategies_20260407_120000/
 
 ```bash
 python scripts/eval_dags.py \
-    --dags confidence random linear empty cot skeleton bidirectional answer_first \
+    --dags confidence random linear cot skeleton bidirectional answer_first \
     --benchmarks mbpp humaneval hotpotqa mmlu \
     --num_steps 128 \
     --max_new_tokens 128 \
