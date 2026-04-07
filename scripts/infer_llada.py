@@ -20,6 +20,32 @@ import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer
 
 
+# ── Mask token lookup ────────────────────────────────────────────────────────
+
+def _get_mask_token_id(model, tokenizer) -> int:
+    """Resolve the mask token id from multiple sources in priority order."""
+    # 1. tokenizer.mask_token_id (works when tokenizer has [MASK] defined)
+    if getattr(tokenizer, "mask_token_id", None) is not None:
+        return tokenizer.mask_token_id
+
+    # 2. model.config.mask_token_id (LLaDA stores it here)
+    cfg = getattr(model, "config", None)
+    if cfg is not None and getattr(cfg, "mask_token_id", None) is not None:
+        return cfg.mask_token_id
+
+    # 3. Look up by token string
+    unk = getattr(tokenizer, "unk_token_id", None)
+    for candidate in ("[MASK]", "<mask>", "[mask]"):
+        tid = tokenizer.convert_tokens_to_ids(candidate)
+        if tid is not None and tid != unk:
+            return tid
+
+    raise ValueError(
+        "Cannot find mask_token_id. "
+        "Pass it explicitly via --mask_token_id or check your tokenizer."
+    )
+
+
 # ── Core sampling helpers ─────────────────────────────────────────────────────
 
 def add_gumbel_noise(logits: torch.Tensor, temperature: float) -> torch.Tensor:
@@ -62,6 +88,7 @@ def llada_generate(
     temperature: float = 0.0,
     cfg_scale: float = 0.0,
     remasking: str = "low_confidence",   # "low_confidence" | "random"
+    mask_token_id: int | None = None,
 ) -> str:
     """Generate text with LLaDA block-wise diffusion sampling.
 
@@ -84,7 +111,7 @@ def llada_generate(
     steps_per_block = steps // num_blocks
 
     device = next(model.parameters()).device
-    mask_id = tokenizer.mask_token_id
+    mask_id = mask_token_id if mask_token_id is not None else _get_mask_token_id(model, tokenizer)
     print(f"[INFO] mask_token_id = {mask_id}  ({repr(tokenizer.decode([mask_id]))})")
 
     # ── Encode prompt with chat template ──────────────────────────────────────
@@ -188,6 +215,8 @@ def main():
     parser.add_argument("--cfg_scale",    type=float, default=0.0)
     parser.add_argument("--remasking",    default="low_confidence",
                         choices=["low_confidence", "random"])
+    parser.add_argument("--mask_token_id", type=int, default=None,
+                        help="Override mask token id if tokenizer does not expose it")
     parser.add_argument("--dtype",        default="bfloat16",
                         choices=["bfloat16", "float16", "float32"])
     args = parser.parse_args()
@@ -218,6 +247,7 @@ def main():
         temperature=args.temperature,
         cfg_scale=args.cfg_scale,
         remasking=args.remasking,
+        mask_token_id=args.mask_token_id,
     )
     print(f"\n{'='*60}\nGenerated output:\n{'='*60}\n{output}\n{'='*60}")
 
