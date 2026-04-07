@@ -11,9 +11,12 @@ set -e
 MODEL_ID="GSAI-ML/LLaDA-8B-Instruct"
 OUTPUT_DIR="results/llada_dag_eval_$(date +%Y%m%d_%H%M%S)"
 NUM_STEPS=128
+BLOCK_LENGTH=32
 NUM_SAMPLES=200          # Set to null to run on all samples
 TEMPERATURE=0.0
-MAX_NEW_TOKENS=512
+CFG_SCALE=0.0
+REMASKING="low_confidence"
+MAX_NEW_TOKENS=128       # must be divisible by BLOCK_LENGTH
 COT_STEPS=4
 TORCH_DTYPE="bfloat16"
 
@@ -64,7 +67,10 @@ CMD="python scripts/eval_dags.py \
     --benchmarks $BENCHMARKS \
     --dags $DAGS \
     --num_steps $NUM_STEPS \
+    --block_length $BLOCK_LENGTH \
     --temperature $TEMPERATURE \
+    --cfg_scale $CFG_SCALE \
+    --remasking $REMASKING \
     --max_new_tokens $MAX_NEW_TOKENS \
     --generation_len $MAX_NEW_TOKENS \
     --cot_steps $COT_STEPS \
