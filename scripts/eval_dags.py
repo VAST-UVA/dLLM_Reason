@@ -140,7 +140,7 @@ def build_dag_scheduler(dag_name: str, seq_len: int, args, device: torch.device)
     from dllm_reason.scheduler.random_scheduler import RandomScheduler
     from dllm_reason.scheduler.linear_scheduler import LinearScheduler
 
-    if dag_name == "empty":
+    if dag_name in ("empty", "random"):
         # No DAG constraints — pure random unmasking
         return RandomScheduler(), None
 
