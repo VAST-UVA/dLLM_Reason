@@ -106,8 +106,15 @@ class MBPPEvaluator(BenchmarkEvaluator):
             passed = 0
             sample_details = []
 
+            # Include test cases so the model knows the function name/signature
+            prompt_with_tests = (
+                f"{prompt}\n\n"
+                f"Your function must pass these tests:\n"
+                + "\n".join(f"    {t}" for t in test_list)
+            )
+
             for _ in range(n_samples):
-                generated = self._generate(prompt, self.SYSTEM_PROMPT)
+                generated = self._generate(prompt_with_tests, self.SYSTEM_PROMPT)
                 code = self._extract_code(generated)
 
                 # Diagnostic: log first few samples so raw output is always visible
