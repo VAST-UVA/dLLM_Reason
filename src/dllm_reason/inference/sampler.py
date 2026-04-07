@@ -27,6 +27,7 @@ class SamplingConfig:
     top_p: float = 1.0       # 1.0 = no nucleus filtering
     show_progress: bool = True
     record_trajectory: bool = False
+    debug: bool = False      # print per-step unmasking stats to DEBUG log
 
 
 @dataclass
@@ -98,6 +99,8 @@ class DiffusionSampler:
             steps = tqdm(steps, desc="Sampling", leave=False)
 
         mask_id = self.model.mask_token_id
+        _debug = cfg.debug if hasattr(cfg, "debug") else False
+        prompt_len = int(prompt_mask[0].sum().item()) if prompt_mask is not None else 0
 
         for step in steps:
             # Timestep: from ~1 (noisy) to ~0 (clean)
@@ -152,12 +155,23 @@ class DiffusionSampler:
             # Don't modify prompt positions
             positions_to_unmask = positions_to_unmask & ~prompt_mask
 
-            if positions_to_unmask.any():
+            n_to_unmask = int(positions_to_unmask.sum().item())
+            if n_to_unmask > 0:
                 sampled = torch.multinomial(
                     probs.view(-1, probs.shape[-1]), num_samples=1
                 ).view(batch_size, seq_len)
                 x_t = torch.where(positions_to_unmask, sampled, x_t)
                 is_unmasked = is_unmasked | positions_to_unmask
+
+            if _debug and step % max(1, cfg.num_steps // 8) == 0:
+                n_still_masked = int((x_t[0, prompt_len:] == mask_id).sum().item())
+                gen_len = seq_len - prompt_len
+                logger.debug(
+                    f"step {step:3d}/{cfg.num_steps} | "
+                    f"unmasked_this_step={n_to_unmask:4d} | "
+                    f"still_masked={n_still_masked}/{gen_len} | "
+                    f"gen_tokens={x_t[0, prompt_len:prompt_len+8].tolist()}"  # first 8 gen tokens
+                )
 
             if cfg.record_trajectory:
                 trajectory.append(x_t.clone())
