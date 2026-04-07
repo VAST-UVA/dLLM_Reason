@@ -24,23 +24,21 @@ class RandomScheduler(UnmaskingScheduler):
         is_unmasked: torch.Tensor,
         logits: torch.Tensor,
         confidences: torch.Tensor,
+        block_mask: torch.Tensor | None = None,
+        n_to_select: int = 1,
     ) -> torch.Tensor:
         B, L = current_mask.shape
         device = current_mask.device
 
-        num_masked = current_mask.sum(dim=-1)  # (B,)
-        num_to_unmask = self._compute_num_to_unmask(step, total_steps, num_masked)
-
-        # For each batch element, randomly select positions to unmask
+        eligible = current_mask & block_mask if block_mask is not None else current_mask
         result = torch.zeros(B, L, dtype=torch.bool, device=device)
 
         for b in range(B):
-            masked_indices = current_mask[b].nonzero(as_tuple=False).squeeze(-1)
-            if len(masked_indices) == 0:
+            indices = eligible[b].nonzero(as_tuple=False).squeeze(-1)
+            if len(indices) == 0:
                 continue
-            n = min(num_to_unmask[b].item(), len(masked_indices))
-            perm = torch.randperm(len(masked_indices), device=device)[:n]
-            selected = masked_indices[perm]
-            result[b, selected] = True
+            n = min(n_to_select, len(indices))
+            perm = torch.randperm(len(indices), device=device)[:n]
+            result[b, indices[perm]] = True
 
         return result
