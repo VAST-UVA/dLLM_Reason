@@ -111,12 +111,18 @@ class DiffusionSampler:
             output = self.model.forward(x_t, t)
             logits = output.logits  # (B, L, V)
 
-            # ── Suppress mask token BEFORE any probability computation ──────
-            # LLaDA's mask token logit is often the highest value; if left in,
-            # every position samples back to [MASK] and nothing ever unmasks.
+            # ── 1. Suppress mask token in raw logits ─────────────────────────
+            # Must happen before any probability computation so that the mask
+            # token never dominates confidence scores or gets sampled.
             logits = logits.clone()
             if mask_id < logits.shape[-1]:
                 logits[..., mask_id] = -float("inf")
+
+            # ── 2. Confidence from RAW logits (no temperature distortion) ────
+            # The scheduler selects positions by confidence rank; applying
+            # temperature here would distort those ranks without benefit.
+            raw_probs = torch.softmax(logits, dim=-1)
+            confidences = raw_probs.max(dim=-1).values  # (B, L)
 
             # ── Step-0 diagnostics ────────────────────────────────────────────
             if step == 0:
@@ -135,77 +141,88 @@ class DiffusionSampler:
                 )
             # ─────────────────────────────────────────────────────────────────
 
-            # Apply temperature
-            if cfg.temperature != 1.0:
-                logits = logits / cfg.temperature
-
-            # Top-k filtering
-            if cfg.top_k > 0:
-                top_k_val = min(cfg.top_k, logits.shape[-1])
-                topk_vals, _ = logits.topk(top_k_val, dim=-1)
-                threshold = topk_vals[..., -1:]
-                logits = logits.masked_fill(logits < threshold, -float("inf"))
-
-            # Top-p (nucleus) filtering
-            if cfg.top_p < 1.0:
-                sorted_logits, sorted_indices = logits.sort(dim=-1, descending=True)
-                cum_probs = sorted_logits.softmax(dim=-1).cumsum(dim=-1)
-                nucleus_mask = cum_probs - sorted_logits.softmax(dim=-1) >= cfg.top_p
-                sorted_logits[nucleus_mask] = -float("inf")
-                logits = sorted_logits.scatter(-1, sorted_indices, sorted_logits)
-
-            # Probabilities and per-position confidence (mask token already excluded)
-            probs = torch.softmax(logits, dim=-1)
-            confidences = probs.max(dim=-1).values  # (B, L)
-
-            # Ask scheduler which positions to unmask
+            # ── 3. Scheduler: which positions to unmask ───────────────────────
             current_mask = (x_t == mask_id) & ~prompt_mask
             positions_to_unmask = self.scheduler.select_positions(
                 step=step,
                 total_steps=cfg.num_steps,
                 current_mask=current_mask,
                 is_unmasked=is_unmasked,
-                logits=logits,
+                logits=logits,       # raw (mask-suppressed, no temperature)
                 confidences=confidences,
             )
-
-            # Don't modify prompt positions
             positions_to_unmask = positions_to_unmask & ~prompt_mask
-
             n_to_unmask = int(positions_to_unmask.sum().item())
-            # Step-0 post-scheduler diagnostic
+
+            # ── Step-0 post-scheduler diagnostic ─────────────────────────────
             if step == 0:
                 logger.info(
                     f"[DIAG step=0 post-sched] "
                     f"current_mask.sum={current_mask.sum().item()} | "
                     f"positions_to_unmask.sum={n_to_unmask} | "
                     f"confidences[0,prompt_len:prompt_len+4]={confidences[0, prompt_len:prompt_len+4].tolist()} | "
-                    f"probs[0,prompt_len].max={probs[0, prompt_len].max().item():.4f} | "
-                    f"probs[0,prompt_len].argmax={probs[0, prompt_len].argmax().item()}"
+                    f"raw_probs[0,prompt_len].max={raw_probs[0, prompt_len].max().item():.4f} | "
+                    f"raw_probs[0,prompt_len].argmax={raw_probs[0, prompt_len].argmax().item()}"
                 )
-            if n_to_unmask > 0:
-                # Hard-zero mask token probability at sampling time.
-                # This is a belt-and-suspenders guard: logits[..., mask_id]
-                # was already set to -inf above, but temperature scaling or
-                # top-k/top-p can introduce NaNs/Infs that slip through
-                # softmax.  Zeroing here guarantees mask_id is never sampled
-                # regardless of upstream numerical issues.
-                sample_probs = probs.clone()
-                if mask_id < sample_probs.shape[-1]:
-                    sample_probs[..., mask_id] = 0.0
-                # Re-normalise so multinomial gets a valid distribution.
-                # Any position whose total probability is 0 after zeroing
-                # (shouldn't happen, but guard anyway) falls back to uniform.
-                prob_sum = sample_probs.sum(dim=-1, keepdim=True)
-                zero_rows = (prob_sum == 0).squeeze(-1)  # (B, L)
-                if zero_rows.any():
-                    sample_probs[zero_rows] = 1.0  # uniform fallback
-                    prob_sum[zero_rows.unsqueeze(-1).expand_as(prob_sum)] = sample_probs.shape[-1]
-                sample_probs = sample_probs / prob_sum
+            # ─────────────────────────────────────────────────────────────────
 
-                sampled = torch.multinomial(
-                    sample_probs.view(-1, sample_probs.shape[-1]), num_samples=1
-                ).view(batch_size, seq_len)
+            # ── 4. Sample ONLY for positions being unmasked ───────────────────
+            # Temperature / top-k / top-p are applied here — after the
+            # scheduler has made its selection — so they affect the token
+            # identity, not the position-selection decision.
+            if n_to_unmask > 0:
+                if cfg.temperature == 0.0:
+                    # Greedy: argmax directly, no softmax needed.
+                    sampled = logits.argmax(dim=-1)  # (B, L)
+                else:
+                    sample_logits = logits.clone()
+
+                    # Temperature scaling
+                    if cfg.temperature != 1.0:
+                        sample_logits = sample_logits / cfg.temperature
+
+                    # Top-k filtering
+                    if cfg.top_k > 0:
+                        top_k_val = min(cfg.top_k, sample_logits.shape[-1])
+                        topk_vals, _ = sample_logits.topk(top_k_val, dim=-1)
+                        threshold = topk_vals[..., -1:]
+                        sample_logits = sample_logits.masked_fill(
+                            sample_logits < threshold, -float("inf")
+                        )
+
+                    # Top-p (nucleus) filtering
+                    if cfg.top_p < 1.0:
+                        sorted_logits, sorted_indices = sample_logits.sort(
+                            dim=-1, descending=True
+                        )
+                        cum_probs = sorted_logits.softmax(dim=-1).cumsum(dim=-1)
+                        nucleus_mask = (
+                            cum_probs - sorted_logits.softmax(dim=-1) >= cfg.top_p
+                        )
+                        sorted_logits[nucleus_mask] = -float("inf")
+                        sample_logits = sorted_logits.scatter(
+                            -1, sorted_indices, sorted_logits
+                        )
+
+                    # Convert to probabilities; hard-zero mask token as a
+                    # final guard against any numerical residue.
+                    sample_probs = torch.softmax(sample_logits, dim=-1)
+                    if mask_id < sample_probs.shape[-1]:
+                        sample_probs = sample_probs.clone()
+                        sample_probs[..., mask_id] = 0.0
+
+                    # Re-normalise; fall back to uniform if all zeros.
+                    prob_sum = sample_probs.sum(dim=-1, keepdim=True)
+                    zero_rows = (prob_sum == 0).squeeze(-1)
+                    if zero_rows.any():
+                        sample_probs[zero_rows] = 1.0
+                        prob_sum = sample_probs.sum(dim=-1, keepdim=True)
+                    sample_probs = sample_probs / prob_sum
+
+                    sampled = torch.multinomial(
+                        sample_probs.view(-1, sample_probs.shape[-1]), num_samples=1
+                    ).view(batch_size, seq_len)
+
                 x_t = torch.where(positions_to_unmask, sampled, x_t)
                 is_unmasked = is_unmasked | positions_to_unmask
 
