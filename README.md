@@ -23,27 +23,132 @@ cd dLLM_Reason
 pip install -e ".[dev,library]"
 
 # Download models & datasets
-python scripts/download_models.py              # -> checkpoints/
+python scripts/download_models.py              # -> checkpoints/llada-instruct/
 python scripts/download_datasets.py            # -> datasets/
 
-# Or use HF mirror (China)
+# HF mirror (China)
 python scripts/download_models.py --mirror https://hf-mirror.com
 python scripts/download_datasets.py --mirror https://hf-mirror.com
-
-# Server one-shot setup
-bash scripts/setup_server.sh
-bash scripts/setup_server.sh --mirror https://hf-mirror.com  # with mirror
 ```
 
-## CLI
+## Usage
+
+### 1. Run evaluation (recommended entry point)
+
+Edit the configuration block at the top of `scripts/run_eval.sh`, then:
 
 ```bash
-dllm-train       # Train dLLM models
-dllm-eval        # Evaluate with multiple schedulers
-dllm-eval-dags   # LLaDA + DAG strategies on benchmarks
-dllm-search      # Search optimal DAG structures
-dllm-viz         # Visualize DAG structures
+bash scripts/run_eval.sh
 ```
+
+Key variables to configure:
+
+```bash
+# scripts/run_eval.sh  -- configuration block
+MODEL_ID="checkpoints/llada-instruct"  # local path to LLaDA weights
+NUM_STEPS=128         # diffusion denoising steps
+BLOCK_LENGTH=32       # tokens per block (MAX_NEW_TOKENS must be divisible by this)
+TEMPERATURE=0.0       # 0 = greedy argmax, >0 = sampling
+CFG_SCALE=0.0         # classifier-free guidance scale (0 = disabled)
+REMASKING="low_confidence"  # low_confidence | random
+MAX_NEW_TOKENS=128    # total generation length
+
+BENCHMARKS="mbpp humaneval"   # space-separated list
+NUM_SAMPLES=200               # samples per benchmark (leave empty for all)
+DAGS="confidence"             # scheduler strategies (see below)
+
+RUN_TESTS=true        # false = skip code execution, only inspect outputs
+VERBOSE_ERRORS=false  # true = print per-sample error logs
+```
+
+Results and a full log are written to `results/llada_eval_<timestamp>/`.
+
+### 2. Config file + CLI overrides
+
+All parameters can also be set via `configs/eval_default.yaml` and overridden on the command line:
+
+```bash
+# Use config file defaults
+python scripts/eval_dags.py --config configs/eval_default.yaml
+
+# Override specific values
+python scripts/eval_dags.py \
+    --config configs/eval_default.yaml \
+    --num_steps 64 \
+    --temperature 0.5 \
+    --benchmarks mbpp \
+    --num_samples 50 \
+    --verbose_errors
+```
+
+`configs/eval_default.yaml` sections:
+
+```yaml
+model:
+  model_id: "checkpoints/llada-instruct"
+  torch_dtype: "bfloat16"   # bfloat16 | float16 | float32
+
+inference:
+  num_steps: 128
+  block_length: 32
+  temperature: 0.0          # 0 = greedy argmax
+  cfg_scale: 0.0
+  remasking: "low_confidence"
+  max_new_tokens: 128
+
+benchmarks:
+  benchmarks: ["mbpp", "humaneval"]
+  num_samples: null         # null = all samples
+  run_tests: true
+  verbose_errors: false     # --verbose_errors to enable
+
+dags:
+  dags: ["confidence"]
+  cot_steps: 4
+```
+
+### 3. Standalone single-prompt inference
+
+```bash
+python scripts/infer_llada.py \
+    --model_id checkpoints/llada-instruct \
+    --prompt "What is 7 * 8?" \
+    --num_steps 128 \
+    --block_length 32 \
+    --temperature 0.0
+```
+
+### Available DAG / scheduler strategies
+
+| Strategy | Description |
+|----------|-------------|
+| `confidence` | Unmask highest-confidence tokens first (strong baseline) |
+| `random` | Uniform random unmasking |
+| `linear` | Left-to-right sequential unmasking |
+| `empty` | Standard LLaDA (no DAG constraint) |
+| `cot` | Chain-of-Thought: segment-level dependencies |
+| `skeleton` | Skeleton-then-Detail: structural tokens first |
+| `bidirectional` | Bidirectional chains from both ends |
+| `answer_first` | Answer token unmasked first, reasoning filled in |
+
+Pass multiple strategies to compare in one run:
+
+```bash
+DAGS="confidence empty linear cot skeleton"
+```
+
+### Available benchmarks
+
+| Benchmark | Type | Metric |
+|-----------|------|--------|
+| `mbpp` | Python code generation | pass@1 |
+| `humaneval` | Python code generation | pass@1 |
+| `gsm8k` | Math reasoning | exact match |
+| `math` | Competition math | exact match |
+| `mmlu` | Knowledge (multi-subject) | accuracy |
+| `hotpotqa` | Multi-hop QA | EM / F1 |
+| `arc` | Science reasoning | accuracy |
+| `prontoqa` | Logic reasoning | accuracy |
 
 ## Project Structure
 
@@ -145,35 +250,20 @@ All components independently toggleable for ablation experiments. 7 preset confi
 | ARC | Science reasoning | Accuracy |
 | ProntoQA | Logic | Accuracy |
 
-## Example Workflows
-
-```bash
-# Train MDLM on GSM8K
-dllm-train --model mdlm --dataset gsm8k --mode pretrain --output_dir checkpoints/mdlm_gsm8k
-
-# Evaluate LLaDA with multiple DAG strategies
-dllm-eval-dags --benchmarks mbpp humaneval mmlu --dags cot skeleton bidirectional --num_steps 128
-
-# Search optimal DAG
-dllm-search --method evolutionary --population_size 20 --budget 200
-
-# Visualize DAG templates
-dllm-viz --mode templates --seq_len 32 --output_dir figures/dags
-```
-
 ## Configuration
 
 All configs use YAML + Hydra/OmegaConf.
 
-| Directory | Count | Contents |
-|-----------|-------|----------|
-| `configs/model/` | 4 | Model hyperparameters |
-| `configs/graph/` | 5 | DAG template parameters |
-| `configs/search/` | 4 | Search algorithm settings |
-| `configs/task/` | 4 | Dataset configs |
-| `configs/eval/` | 4 | Benchmark settings |
-| `configs/experiment/` | 3 | End-to-end experiments |
-| `configs/library/` | 7 | Library ablation variants |
+| Directory | Contents |
+|-----------|----------|
+| `configs/model/` | Model hyperparameters (mdlm, sedd, d3pm, llada) |
+| `configs/graph/` | DAG template parameters |
+| `configs/search/` | Search algorithm settings |
+| `configs/task/` | Dataset configs |
+| `configs/eval/` | Benchmark settings |
+| `configs/experiment/` | End-to-end experiment combinations |
+| `configs/library/` | DAG Library ablation variants |
+| `configs/eval_default.yaml` | Default evaluation config (used by run_eval.sh) |
 
 ## Documentation
 
