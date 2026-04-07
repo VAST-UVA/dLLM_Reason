@@ -126,19 +126,23 @@ class DiffusionSampler:
 
             # ── Step-0 diagnostics ────────────────────────────────────────────
             if step == 0:
-                gen_slice = x_t[0, prompt_len:]
-                current_mask_check = (x_t == mask_id) & ~prompt_mask
-                logger.info(
-                    f"[DIAG step=0] mask_token_id={mask_id} | "
-                    f"logits.shape={list(logits.shape)} | "
-                    f"x_t gen unique={gen_slice.unique().tolist()} | "
-                    f"current_mask sum={current_mask_check.sum().item()}/{seq_len - prompt_len} | "
-                    f"logits[0,prompt_len,mask_id]="
-                    f"{output.logits[0, prompt_len, mask_id].item() if mask_id < output.logits.shape[-1] else 'OOB'} "
-                    f"(before suppression) | "
-                    f"logits[0,prompt_len].argmax={output.logits[0, prompt_len].argmax().item()} | "
-                    f"logits[0,prompt_len] top5 tokens={output.logits[0, prompt_len].topk(5).indices.tolist()}"
-                )
+                _raw_logits = output.logits  # before suppression
+                _pl = prompt_len
+                print(f"\n===== SAMPLER DIAG step=0 =====")
+                print(f"  mask_id            : {mask_id}")
+                print(f"  logits.shape       : {list(logits.shape)}")
+                print(f"  x_t gen unique     : {x_t[0, _pl:].unique().tolist()}")
+                print(f"  current_mask sum   : {((x_t==mask_id)&~prompt_mask).sum().item()} / {seq_len-_pl}")
+                print(f"  --- position [0, prompt_len={_pl}] ---")
+                print(f"  raw  argmax (before suppress) : {_raw_logits[0,_pl].argmax().item()}")
+                print(f"  raw  top-5  (before suppress) : {_raw_logits[0,_pl].topk(5).indices.tolist()}")
+                print(f"  logit[mask_id] before         : {_raw_logits[0,_pl,mask_id].item():.3f}")
+                print(f"  logit[mask_id] after          : {logits[0,_pl,mask_id].item()}")
+                print(f"  post-suppress argmax          : {logits[0,_pl].argmax().item()}")
+                print(f"  post-suppress top-5           : {logits[0,_pl].topk(5).indices.tolist()}")
+                print(f"  raw_probs argmax              : {raw_probs[0,_pl].argmax().item()}")
+                print(f"  raw_probs[mask_id]            : {raw_probs[0,_pl,mask_id].item():.6f}")
+                print(f"================================\n")
             # ─────────────────────────────────────────────────────────────────
 
             # ── 3. Scheduler: which positions to unmask ───────────────────────
