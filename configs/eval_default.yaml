@@ -18,7 +18,7 @@ benchmarks:
   benchmarks: ["mbpp", "humaneval"]
   num_samples: null            # null = all samples
   run_tests: true
-  verbose_errors: true
+  verbose_errors: false        # true = print per-sample stderr/error logs
 
 dags:
   dags: ["confidence"]

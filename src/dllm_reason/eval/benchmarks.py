@@ -50,7 +50,7 @@ class BenchmarkEvaluator:
         max_new_tokens: int = 128,
         num_samples: int | None = None,
         run_tests: bool = True,
-        verbose_errors: bool = True,
+        verbose_errors: bool = False,
     ):
         self.model = model
         self.scheduler = scheduler
@@ -130,9 +130,8 @@ class MBPPEvaluator(BenchmarkEvaluator):
                 generated = self._generate(prompt_with_tests, self.SYSTEM_PROMPT)
                 code = self._extract_code(generated)
 
-                # Diagnostic: log first few samples so raw output is always visible
                 if len(results) < 3:
-                    logger.info(
+                    logger.debug(
                         f"MBPP #{task_id} raw output ({len(generated)} chars):\n"
                         f"{generated[:500]}\n---extracted---\n{code[:500]}"
                     )
@@ -284,9 +283,8 @@ class HumanEvalEvaluator(BenchmarkEvaluator):
                 completion = self._extract_completion(generated, prompt)
                 full_code = prompt + completion
 
-                # Diagnostic: log first few samples so raw output is always visible
                 if len(results) < 3:
-                    logger.info(
+                    logger.debug(
                         f"HumanEval {task_id} raw output ({len(generated)} chars):\n"
                         f"{generated[:500]}\n---completion---\n{completion[:500]}"
                     )

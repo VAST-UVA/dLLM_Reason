@@ -100,8 +100,9 @@ def parse_args():
                         default=D("resume", False))
     parser.add_argument("--no_run_tests",     action="store_true",
                         default=not D("run_tests", True))
-    parser.add_argument("--no_verbose_errors", action="store_true",
-                        default=not D("verbose_errors", True))
+    parser.add_argument("--verbose_errors", action="store_true",
+                        default=D("verbose_errors", False),
+                        help="Print per-sample stderr/error/timeout on failure")
 
     return parser.parse_args()
 
@@ -259,7 +260,7 @@ def main():
                 "max_new_tokens": args.max_new_tokens,
                 "num_samples": args.num_samples,
                 "run_tests": not args.no_run_tests,
-                "verbose_errors": not args.no_verbose_errors,
+                "verbose_errors": args.verbose_errors,
             }
 
             if benchmark_name == "mmlu" and args.mmlu_subjects:
