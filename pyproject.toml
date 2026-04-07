@@ -4,8 +4,21 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dllm-reason"
-version = "0.1.0"
+version = "1.2.3"
 description = "DAG-guided discrete diffusion language models for reasoning"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "BDeMo" }]
+keywords = ["discrete diffusion", "language model", "reasoning", "DAG", "LLaDA"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 requires-python = ">=3.10"
 dependencies = [
     "torch>=2.1.0",
@@ -44,8 +57,16 @@ dllm-eval-dags = "dllm_reason.cli:eval_dags"
 dllm-search = "dllm_reason.cli:search_dag"
 dllm-viz = "dllm_reason.cli:visualize_dag"
 
+[project.urls]
+"Homepage" = "https://github.com/BDeMo/dLLM_Reason"
+"Bug Tracker" = "https://github.com/BDeMo/dLLM_Reason/issues"
+"Documentation" = "https://github.com/BDeMo/dLLM_Reason#readme"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"dllm_reason" = ["py.typed"]
 
 [tool.ruff]
 line-length = 100
