@@ -39,20 +39,26 @@ class BenchmarkEvaluator:
 
     def __init__(
         self,
-        model,           # LLaDAWrapper or any DiffusionLM
-        scheduler,       # UnmaskingScheduler
+        model,
+        scheduler,
         num_steps: int = 128,
+        block_length: int = 32,
         temperature: float = 0.0,
+        cfg_scale: float = 0.0,
+        remasking: str = "low_confidence",
         batch_size: int = 1,
-        max_new_tokens: int = 512,
-        num_samples: int | None = None,  # None = all
-        run_tests: bool = True,          # False = skip code execution, score 0
-        verbose_errors: bool = True,     # False = silence subprocess stderr logs
+        max_new_tokens: int = 128,
+        num_samples: int | None = None,
+        run_tests: bool = True,
+        verbose_errors: bool = True,
     ):
         self.model = model
         self.scheduler = scheduler
         self.num_steps = num_steps
+        self.block_length = block_length
         self.temperature = temperature
+        self.cfg_scale = cfg_scale
+        self.remasking = remasking
         self.batch_size = batch_size
         self.max_new_tokens = max_new_tokens
         self.num_samples = num_samples
@@ -63,9 +69,12 @@ class BenchmarkEvaluator:
         return self.model.generate(
             prompt,
             generation_len=self.max_new_tokens,
+            block_length=self.block_length,
             scheduler=self.scheduler,
             num_steps=self.num_steps,
             temperature=self.temperature,
+            cfg_scale=self.cfg_scale,
+            remasking=self.remasking,
             system_prompt=system_prompt,
         )
 

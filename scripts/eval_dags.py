@@ -52,13 +52,20 @@ def parse_args():
 
     # Inference params
     parser.add_argument("--num_steps", type=int, default=128,
-                        help="Number of diffusion sampling steps")
+                        help="Total denoising steps (spread across blocks)")
+    parser.add_argument("--block_length", type=int, default=32,
+                        help="Tokens per denoising block (gen_length must be divisible)")
     parser.add_argument("--temperature", type=float, default=0.0,
-                        help="Sampling temperature (0 = greedy/max)")
-    parser.add_argument("--max_new_tokens", type=int, default=512,
-                        help="Max tokens to generate")
-    parser.add_argument("--generation_len", type=int, default=512,
-                        help="Generation sequence length appended to prompt")
+                        help="Gumbel noise scale; 0 = greedy argmax")
+    parser.add_argument("--cfg_scale", type=float, default=0.0,
+                        help="Classifier-free guidance scale; 0 = disabled")
+    parser.add_argument("--remasking", type=str, default="low_confidence",
+                        choices=["low_confidence", "random"],
+                        help="Remasking strategy within each block")
+    parser.add_argument("--max_new_tokens", type=int, default=128,
+                        help="Tokens to generate (must be divisible by block_length)")
+    parser.add_argument("--generation_len", type=int, default=128,
+                        help="Alias for max_new_tokens (kept for compatibility)")
 
     # CoT DAG params
     parser.add_argument("--cot_steps", type=int, default=4,
@@ -227,7 +234,10 @@ def main():
                 "model": model,
                 "scheduler": scheduler,
                 "num_steps": args.num_steps,
+                "block_length": args.block_length,
                 "temperature": args.temperature,
+                "cfg_scale": args.cfg_scale,
+                "remasking": args.remasking,
                 "max_new_tokens": args.max_new_tokens,
                 "num_samples": args.num_samples,
                 "run_tests": not args.no_run_tests,
