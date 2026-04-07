@@ -76,7 +76,7 @@ def parse_args():
     # DAG strategies
     parser.add_argument("--dags", nargs="+",
                         default=D("dags", ["confidence"]),
-                        choices=["empty", "linear", "cot", "bidirectional",
+                        choices=["empty", "random", "linear", "cot", "bidirectional",
                                  "confidence", "skeleton", "answer_first"])
 
     # Inference params
