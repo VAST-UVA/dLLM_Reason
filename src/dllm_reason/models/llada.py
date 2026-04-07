@@ -87,9 +87,6 @@ class LLaDAWrapper(DiffusionLM):
 
         self.tokenizer = tokenizer
         self.model_id = model_id
-        # Cache all special token ids (mask + EOS/BOS/PAD/EOT/…) so the
-        # sampler can suppress them at generation time.
-        self._suppress_ids: list[int] = self._build_suppress_ids()
 
         # Load the pretrained model
         logger.info(f"Loading LLaDA model from {model_id} ...")
@@ -109,23 +106,6 @@ class LLaDAWrapper(DiffusionLM):
         # Freeze by default — we only use it for inference
         for p in self._llada.parameters():
             p.requires_grad = False
-
-    def _build_suppress_ids(self) -> list[int]:
-        """Collect all token ids that should never appear in generated output."""
-        ids: set[int] = {self.mask_token_id}
-        tok = self.tokenizer
-        for attr in ("eos_token_id", "bos_token_id", "pad_token_id"):
-            val = getattr(tok, attr, None)
-            if val is not None:
-                ids.add(val)
-        # all_special_ids covers <|eot_id|>, <|endoftext|>, etc.
-        for sid in getattr(tok, "all_special_ids", []):
-            ids.add(sid)
-        return sorted(ids)
-
-    @property
-    def suppress_token_ids(self) -> list[int]:
-        return self._suppress_ids
 
     def forward(
         self,
