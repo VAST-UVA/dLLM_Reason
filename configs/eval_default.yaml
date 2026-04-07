@@ -1,30 +1,37 @@
 # Default evaluation configuration.
-# All values here can be overridden by passing the corresponding --flag on the CLI.
+# All values can be overridden by passing the corresponding --flag on the CLI.
+# CLI arguments always take priority over this file.
 
+# === Model ===
 model:
   model_id: "checkpoints/llada-instruct"
   torch_dtype: "bfloat16"      # bfloat16 | float16 | float32
   device_map: "auto"
 
+# === Inference ===
 inference:
   num_steps: 128
-  block_length: 32
+  block_length: 32             # tokens per block; max_new_tokens must be divisible
   temperature: 0.0             # 0 = greedy argmax
-  cfg_scale: 0.0               # 0 = disabled
+  cfg_scale: 0.0               # classifier-free guidance scale; 0 = disabled
   remasking: "low_confidence"  # low_confidence | random
-  max_new_tokens: 128          # must be divisible by block_length
+  max_new_tokens: 128
 
+# === Benchmarks ===
 benchmarks:
   benchmarks: ["mbpp", "humaneval"]
-  num_samples: null            # null = all samples
-  run_tests: true
-  verbose_errors: false        # true = print per-sample stderr/error logs
+  num_samples: null            # null = full dataset
+  run_tests: true              # false = generate only, skip code execution
+  verbose_errors: false        # true = print per-sample error logs
 
+# === DAG / scheduler strategies ===
 dags:
   dags: ["confidence"]
-  cot_steps: 4
-  mmlu_subjects: null          # null = default subset
+  # choices: confidence | random | linear | empty | cot | skeleton | bidirectional | answer_first
+  cot_steps: 4                 # number of reasoning segments for cot DAG
+  mmlu_subjects: null          # null = default subject subset
 
+# === Output ===
 output:
   output_dir: "results"
-  resume: false
+  resume: false                # skip runs whose result JSON already exists
