@@ -52,11 +52,30 @@ class LLaDAWrapper(DiffusionLM):
             model_id, trust_remote_code=trust_remote_code
         )
 
-        # LLaDA uses [MASK] token for masked positions
-        if tokenizer.mask_token_id is None:
-            mask_token_id = tokenizer.vocab_size  # fallback
-        else:
-            mask_token_id = tokenizer.mask_token_id
+        # LLaDA uses [MASK] as the absorbing-state token.
+        # tokenizer.mask_token_id is unreliable — it may point to an unrelated
+        # special token (e.g. <|startoftext|>).  Look up by token string first.
+        mask_token_id = None
+        for _candidate in ("[MASK]", "<mask>", "[mask]"):
+            _id = tokenizer.convert_tokens_to_ids(_candidate)
+            # convert_tokens_to_ids returns unk_token_id when not found
+            if _id is not None and _id != tokenizer.unk_token_id:
+                mask_token_id = _id
+                logger.info(f"Found mask token '{_candidate}' at id {_id}")
+                break
+        if mask_token_id is None:
+            # Fall back to tokenizer.mask_token_id, then vocab boundary
+            if tokenizer.mask_token_id is not None:
+                mask_token_id = tokenizer.mask_token_id
+                logger.warning(
+                    f"[MASK] token not found by name; using tokenizer.mask_token_id="
+                    f"{mask_token_id} ({tokenizer.decode([mask_token_id])})"
+                )
+            else:
+                mask_token_id = len(tokenizer) - 1
+                logger.warning(
+                    f"[MASK] token not found; falling back to last vocab index {mask_token_id}"
+                )
 
         vocab_size = len(tokenizer)
 

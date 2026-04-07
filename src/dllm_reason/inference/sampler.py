@@ -150,6 +150,11 @@ class DiffusionSampler:
                     print(f"  top-5 decoded (before)        : {[repr(_tok.decode([t])) for t in _raw_top5]}")
                     print(f"  top-5 decoded (after)         : {[repr(_tok.decode([t])) for t in _top5_after]}")
                     print(f"  mask_id={mask_id} decoded     : {repr(_tok.decode([mask_id]))}")
+                    # Show where [MASK] actually lives
+                    for _cand in ("[MASK]", "<mask>", "[mask]"):
+                        _cand_id = _tok.convert_tokens_to_ids(_cand)
+                        if _cand_id != _tok.unk_token_id:
+                            print(f"  tokenizer '{_cand}' id        : {_cand_id}")
                 print(f"================================\n")
             # ─────────────────────────────────────────────────────────────────
 
