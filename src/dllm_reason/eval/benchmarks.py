@@ -46,6 +46,7 @@ class BenchmarkEvaluator:
         batch_size: int = 1,
         max_new_tokens: int = 512,
         num_samples: int | None = None,  # None = all
+        run_tests: bool = True,          # False = skip code execution, score 0
     ):
         self.model = model
         self.scheduler = scheduler
@@ -54,6 +55,7 @@ class BenchmarkEvaluator:
         self.batch_size = batch_size
         self.max_new_tokens = max_new_tokens
         self.num_samples = num_samples
+        self.run_tests = run_tests
 
     def _generate(self, prompt: str, system_prompt: str | None = None) -> str:
         return self.model.generate(
@@ -124,7 +126,11 @@ class MBPPEvaluator(BenchmarkEvaluator):
                         f"{generated[:500]}\n---extracted---\n{code[:500]}"
                     )
 
-                run_info = self._run_tests(code, test_list)
+                run_info = (
+                    self._run_tests(code, test_list)
+                    if self.run_tests
+                    else {"passed": False, "timed_out": False, "stderr": "", "stdout": "", "error": ""}
+                )
                 if run_info["passed"]:
                     passed += 1
                 sample_details.append({
@@ -277,7 +283,11 @@ class HumanEvalEvaluator(BenchmarkEvaluator):
                         f"{generated[:500]}\n---completion---\n{completion[:500]}"
                     )
 
-                run_info = self._run_humaneval_test(full_code, test, entry_point)
+                run_info = (
+                    self._run_humaneval_test(full_code, test, entry_point)
+                    if self.run_tests
+                    else {"passed": False, "timed_out": False, "stderr": "", "stdout": "", "error": ""}
+                )
                 if run_info["passed"]:
                     passed += 1
                 sample_details.append({
