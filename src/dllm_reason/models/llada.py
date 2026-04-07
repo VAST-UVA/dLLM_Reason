@@ -219,19 +219,27 @@ class LLaDAWrapper(DiffusionLM):
         cfg_scale: float = 0.0,
         remasking: str = "low_confidence",
         system_prompt: str | None = None,
-    ) -> str:
+        record_trajectory: bool = False,
+    ) -> str | tuple[str, list[str]]:
         """High-level generation interface.
 
         Args:
-            prompt:         user message (chat template applied internally)
-            generation_len: tokens to generate (divisible by block_length)
-            block_length:   tokens per denoising block
-            scheduler:      UnmaskingScheduler (defaults to ConfidenceScheduler)
-            num_steps:      total denoising steps (divisible by num_blocks)
-            temperature:    Gumbel noise; 0 = greedy argmax
-            cfg_scale:      classifier-free guidance scale; 0 = disabled
-            remasking:      "low_confidence" | "random"
-            system_prompt:  optional system message
+            prompt:             user message (chat template applied internally)
+            generation_len:     tokens to generate (divisible by block_length)
+            block_length:       tokens per denoising block
+            scheduler:          UnmaskingScheduler (defaults to ConfidenceScheduler)
+            num_steps:          total denoising steps (divisible by num_blocks)
+            temperature:        Gumbel noise; 0 = greedy argmax
+            cfg_scale:          classifier-free guidance scale; 0 = disabled
+            remasking:          "low_confidence" | "random"
+            system_prompt:      optional system message
+            record_trajectory:  if True, return (text, trajectory) where trajectory
+                                is a list of decoded strings — one per denoising step
+                                showing the generation area state at that step.
+
+        Returns:
+            str                     when record_trajectory=False (default)
+            (str, list[str])        when record_trajectory=True
         """
         from dllm_reason.inference.sampler import DiffusionSampler, SamplingConfig
 
@@ -254,6 +262,7 @@ class LLaDAWrapper(DiffusionLM):
                 cfg_scale=cfg_scale,
                 remasking=remasking,
                 show_progress=False,
+                record_trajectory=record_trajectory,
             ),
         )
 
@@ -271,7 +280,6 @@ class LLaDAWrapper(DiffusionLM):
             f"generate(): prompt_len={prompt_len}, gen_len={gen_ids.shape[0]}, "
             f"gen_ids[:20]={gen_ids[:20].tolist()}"
         )
-        # ───────────────────────────────────────────────────────────────────────
 
         # Decode — skip only padding/EOS, not the mask token (already removed).
         generated_text = self.tokenizer.decode(gen_ids, skip_special_tokens=True)
@@ -283,7 +291,19 @@ class LLaDAWrapper(DiffusionLM):
                 f"unique gen token ids={gen_ids.unique().tolist()}"
             )
 
-        return generated_text
+        if not record_trajectory:
+            return generated_text
+
+        # Decode each trajectory step (generation area only, raw — keep mask tokens
+        # visible as "<mask>" so the unmasking progression is readable)
+        trajectory_decoded: list[str] = []
+        for step_ids in result.trajectory:
+            step_gen = step_ids[0, prompt_len:]
+            # Decode without skipping special tokens so [MASK] shows as a token
+            step_text = self.tokenizer.decode(step_gen, skip_special_tokens=False)
+            trajectory_decoded.append(step_text)
+
+        return generated_text, trajectory_decoded
 
     @property
     def device(self) -> torch.device:
