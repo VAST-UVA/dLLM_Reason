@@ -39,29 +39,42 @@ class BenchmarkEvaluator:
 
     def __init__(
         self,
-        model,           # LLaDAWrapper or any DiffusionLM
-        scheduler,       # UnmaskingScheduler
+        model,
+        scheduler,
         num_steps: int = 128,
+        block_length: int = 32,
         temperature: float = 0.0,
+        cfg_scale: float = 0.0,
+        remasking: str = "low_confidence",
         batch_size: int = 1,
-        max_new_tokens: int = 512,
-        num_samples: int | None = None,  # None = all
+        max_new_tokens: int = 128,
+        num_samples: int | None = None,
+        run_tests: bool = True,
+        verbose_errors: bool = False,
     ):
         self.model = model
         self.scheduler = scheduler
         self.num_steps = num_steps
+        self.block_length = block_length
         self.temperature = temperature
+        self.cfg_scale = cfg_scale
+        self.remasking = remasking
         self.batch_size = batch_size
         self.max_new_tokens = max_new_tokens
         self.num_samples = num_samples
+        self.run_tests = run_tests
+        self.verbose_errors = verbose_errors
 
     def _generate(self, prompt: str, system_prompt: str | None = None) -> str:
         return self.model.generate(
             prompt,
             generation_len=self.max_new_tokens,
+            block_length=self.block_length,
             scheduler=self.scheduler,
             num_steps=self.num_steps,
             temperature=self.temperature,
+            cfg_scale=self.cfg_scale,
+            remasking=self.remasking,
             system_prompt=system_prompt,
         )
 
@@ -97,25 +110,69 @@ class MBPPEvaluator(BenchmarkEvaluator):
         results = []
         for item in tqdm(items, desc="MBPP"):
             task_id = item.get("task_id", item.get("source_file", str(len(results))))
-            prompt = item["prompt"]
+            prompt = item.get("prompt", item.get("text", ""))
             test_list = item["test_list"]
             canonical = item["code"]
 
             # Generate N samples for pass@k
             n_samples = 1
             passed = 0
+            sample_details = []
+
+            # Include test cases so the model knows the function name/signature
+            prompt_with_tests = (
+                f"{prompt}\n\n"
+                f"Your function must pass these tests:\n"
+                + "\n".join(f"    {t}" for t in test_list)
+            )
 
             for _ in range(n_samples):
-                generated = self._generate(prompt, self.SYSTEM_PROMPT)
+                generated = self._generate(prompt_with_tests, self.SYSTEM_PROMPT)
                 code = self._extract_code(generated)
-                if self._run_tests(code, test_list):
+
+                if len(results) < 3:
+                    logger.debug(
+                        f"MBPP #{task_id} raw output ({len(generated)} chars):\n"
+                        f"{generated[:500]}\n---extracted---\n{code[:500]}"
+                    )
+
+                run_info = (
+                    self._run_tests(code, test_list)
+                    if self.run_tests
+                    else {"passed": False, "timed_out": False, "stderr": "", "stdout": "", "error": ""}
+                )
+                if run_info["passed"]:
                     passed += 1
+                sample_details.append({
+                    "raw_output": generated,
+                    "extracted_code": code,
+                    "passed": run_info["passed"],
+                    "timed_out": run_info["timed_out"],
+                    "stderr": run_info["stderr"],
+                    "stdout": run_info["stdout"],
+                    "error": run_info["error"],
+                })
+
+            if passed == 0 and self.verbose_errors:
+                detail = sample_details[0]
+                logger.warning(
+                    f"[MBPP {task_id}] FAILED\n"
+                    f"  extracted_code: {detail['extracted_code'][:300]!r}\n"
+                    f"  raw_output:     {detail['raw_output'][:200]!r}"
+                )
+                if detail["timed_out"]:
+                    logger.warning(f"[MBPP {task_id}] TIMEOUT")
+                elif detail["stderr"]:
+                    logger.warning(f"[MBPP {task_id}] STDERR: {detail['stderr'][:300]}")
+                elif detail["error"]:
+                    logger.warning(f"[MBPP {task_id}] ERROR: {detail['error']}")
 
             results.append({
                 "task_id": task_id,
                 "n": n_samples,
                 "passed": passed,
                 "pass@1": pass_at_k(n_samples, passed, 1),
+                "samples": sample_details,
             })
 
         pass_1 = sum(r["pass@1"] for r in results) / len(results)
@@ -140,10 +197,19 @@ class MBPPEvaluator(BenchmarkEvaluator):
         # Assume the whole output is code
         return text
 
-    def _run_tests(self, code: str, tests: list[str], timeout: int = 10) -> bool:
-        """Execute code + tests in a subprocess, return True if all pass."""
+    def _run_tests(self, code: str, tests: list[str], timeout: int = 10) -> dict:
+        """Execute code + tests in a subprocess.
+
+        Returns a dict with keys:
+            passed    (bool) – all tests passed
+            timed_out (bool) – subprocess hit the timeout
+            stderr    (str)  – captured stderr (syntax / runtime errors)
+            stdout    (str)  – captured stdout
+            error     (str)  – unexpected exception message, if any
+        """
         test_code = "\n".join(tests)
         full_code = f"{code}\n\n{test_code}\n"
+        tmp_path = None
 
         try:
             with tempfile.NamedTemporaryFile(
@@ -158,11 +224,22 @@ class MBPPEvaluator(BenchmarkEvaluator):
                 text=True,
                 timeout=timeout,
             )
-            return result.returncode == 0
-        except (subprocess.TimeoutExpired, Exception):
-            return False
+            return {
+                "passed": result.returncode == 0,
+                "timed_out": False,
+                "stderr": result.stderr.strip(),
+                "stdout": result.stdout.strip(),
+                "error": "",
+            }
+        except subprocess.TimeoutExpired:
+            return {"passed": False, "timed_out": True,
+                    "stderr": "", "stdout": "", "error": f"timeout>{timeout}s"}
+        except Exception as exc:
+            return {"passed": False, "timed_out": False,
+                    "stderr": "", "stdout": "", "error": str(exc)}
         finally:
-            Path(tmp_path).unlink(missing_ok=True)
+            if tmp_path:
+                Path(tmp_path).unlink(missing_ok=True)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -199,19 +276,57 @@ class HumanEvalEvaluator(BenchmarkEvaluator):
 
             n_samples = 1
             passed = 0
+            sample_details = []
 
             for _ in range(n_samples):
                 generated = self._generate(prompt, self.SYSTEM_PROMPT)
-                # Prepend the original prompt (function signature)
-                full_code = prompt + self._extract_completion(generated, prompt)
-                if self._run_humaneval_test(full_code, test, entry_point):
+                completion = self._extract_completion(generated, prompt)
+                full_code = prompt + completion
+
+                if len(results) < 3:
+                    logger.debug(
+                        f"HumanEval {task_id} raw output ({len(generated)} chars):\n"
+                        f"{generated[:500]}\n---completion---\n{completion[:500]}"
+                    )
+
+                run_info = (
+                    self._run_humaneval_test(full_code, test, entry_point)
+                    if self.run_tests
+                    else {"passed": False, "timed_out": False, "stderr": "", "stdout": "", "error": ""}
+                )
+                if run_info["passed"]:
                     passed += 1
+                sample_details.append({
+                    "raw_output": generated,
+                    "extracted_completion": completion,
+                    "full_code": full_code,
+                    "passed": run_info["passed"],
+                    "timed_out": run_info["timed_out"],
+                    "stderr": run_info["stderr"],
+                    "stdout": run_info["stdout"],
+                    "error": run_info["error"],
+                })
+
+            if passed == 0 and self.verbose_errors:
+                detail = sample_details[0]
+                logger.warning(
+                    f"[HumanEval {task_id}] FAILED\n"
+                    f"  extracted_completion: {detail['extracted_completion'][:300]!r}\n"
+                    f"  raw_output:           {detail['raw_output'][:200]!r}"
+                )
+                if detail["timed_out"]:
+                    logger.warning(f"[HumanEval {task_id}] TIMEOUT")
+                elif detail["stderr"]:
+                    logger.warning(f"[HumanEval {task_id}] STDERR: {detail['stderr'][:300]}")
+                elif detail["error"]:
+                    logger.warning(f"[HumanEval {task_id}] ERROR: {detail['error']}")
 
             results.append({
                 "task_id": task_id,
                 "n": n_samples,
                 "passed": passed,
                 "pass@1": pass_at_k(n_samples, passed, 1),
+                "samples": sample_details,
             })
 
         pass_1 = sum(r["pass@1"] for r in results) / len(results)
@@ -225,31 +340,85 @@ class HumanEvalEvaluator(BenchmarkEvaluator):
         }
 
     def _extract_completion(self, generated: str, prompt: str) -> str:
-        """Extract the function body from generated text."""
-        # Remove the prompt if echoed
+        """Extract the function body completion from generated text.
+
+        LLaDA is a masked-diffusion model: it does NOT echo the prompt back.
+        The generated text is the completion only (function body).
+        We try four strategies in order:
+
+        1. Strip prompt prefix if the model did echo it (rare).
+        2. Extract a fenced code block (```python / ```) and strip any leading
+           function-def line so only the body (with correct indentation) remains.
+        3. If the raw output contains a def block, extract the indented body.
+        4. Fall back: indent each non-empty line by 4 spaces so it can be
+           appended to the function signature in `prompt`.
+        """
+        # Strategy 1: model echoed the prompt
         if generated.startswith(prompt):
             return generated[len(prompt):]
-        # Extract code block
-        code_block = re.search(r"```python\n(.*?)```", generated, re.DOTALL)
+
+        # Strategy 2: fenced code block
+        code_block = re.search(r"```(?:python)?\n(.*?)```", generated, re.DOTALL)
         if code_block:
             code = code_block.group(1)
-            # Remove the function definition if present
-            if "def " in code:
-                lines = code.split("\n")
-                body_lines = []
-                in_body = False
-                for line in lines:
-                    if line.strip().startswith("def "):
-                        in_body = True
-                        continue
-                    if in_body:
-                        body_lines.append(line)
-                return "\n".join(body_lines)
+            lines = code.split("\n")
+            body_start = None
+            for i, line in enumerate(lines):
+                if line.strip().startswith("def "):
+                    body_start = i + 1
+                    break
+            if body_start is not None:
+                return "\n".join(lines[body_start:])
             return code
-        return generated
 
-    def _run_humaneval_test(self, solution: str, test: str, entry_point: str, timeout: int = 10) -> bool:
+        # Strategy 3: dLLM raw output contains a def block — extract body only
+        if "def " in generated:
+            lines = generated.split("\n")
+            body_lines: list[str] = []
+            in_body = False
+            for line in lines:
+                stripped = line.lstrip()
+                if stripped.startswith("def "):
+                    in_body = True
+                    continue
+                if in_body:
+                    # Stop at next top-level def or class
+                    if stripped and not line[0].isspace() and not stripped.startswith("#"):
+                        if stripped.startswith("def ") or stripped.startswith("class "):
+                            break
+                    body_lines.append(line)
+            if body_lines:
+                return "\n".join(body_lines)
+
+        # Strategy 4: assume the whole output is the function body — indent it
+        logger.debug(
+            "HumanEval _extract_completion: no code fence / def found, "
+            f"indenting raw output (first 120 chars): {generated[:120]!r}"
+        )
+        lines = generated.strip().split("\n")
+        indented = []
+        for line in lines:
+            if line.strip():
+                if not line.startswith(" ") and not line.startswith("\t"):
+                    line = "    " + line
+                indented.append(line)
+            else:
+                indented.append(line)
+        return "\n".join(indented)
+
+    def _run_humaneval_test(self, solution: str, test: str, entry_point: str, timeout: int = 10) -> dict:
+        """Run HumanEval test harness in a subprocess.
+
+        Returns a dict with keys:
+            passed    (bool) – check() passed
+            timed_out (bool) – subprocess hit the timeout
+            stderr    (str)  – captured stderr
+            stdout    (str)  – captured stdout
+            error     (str)  – unexpected exception message, if any
+        """
         full_code = f"{solution}\n\n{test}\n\ncheck({entry_point})\n"
+        tmp_path = None
+
         try:
             with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
                 f.write(full_code)
@@ -259,11 +428,22 @@ class HumanEvalEvaluator(BenchmarkEvaluator):
                 [sys.executable, tmp_path],
                 capture_output=True, text=True, timeout=timeout,
             )
-            return result.returncode == 0
-        except Exception:
-            return False
+            return {
+                "passed": result.returncode == 0,
+                "timed_out": False,
+                "stderr": result.stderr.strip(),
+                "stdout": result.stdout.strip(),
+                "error": "",
+            }
+        except subprocess.TimeoutExpired:
+            return {"passed": False, "timed_out": True,
+                    "stderr": "", "stdout": "", "error": f"timeout>{timeout}s"}
+        except Exception as exc:
+            return {"passed": False, "timed_out": False,
+                    "stderr": "", "stdout": "", "error": str(exc)}
         finally:
-            Path(tmp_path).unlink(missing_ok=True)
+            if tmp_path:
+                Path(tmp_path).unlink(missing_ok=True)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
