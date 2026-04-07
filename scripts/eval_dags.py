@@ -73,6 +73,8 @@ def parse_args():
                         help="Directory to save results")
     parser.add_argument("--resume", action="store_true",
                         help="Skip already-completed (benchmark, dag) pairs")
+    parser.add_argument("--no_run_tests", action="store_true",
+                        help="Skip code execution (useful for inspecting raw outputs)")
 
     return parser.parse_args()
 
@@ -226,6 +228,7 @@ def main():
                 "temperature": args.temperature,
                 "max_new_tokens": args.max_new_tokens,
                 "num_samples": args.num_samples,
+                "run_tests": not args.no_run_tests,
             }
 
             if benchmark_name == "mmlu" and args.mmlu_subjects:
