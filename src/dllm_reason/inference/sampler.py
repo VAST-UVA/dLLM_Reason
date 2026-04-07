@@ -118,6 +118,23 @@ class DiffusionSampler:
             if mask_id < logits.shape[-1]:
                 logits[..., mask_id] = -float("inf")
 
+            # ── Step-0 diagnostics ────────────────────────────────────────────
+            if step == 0:
+                gen_slice = x_t[0, prompt_len:]
+                current_mask_check = (x_t == mask_id) & ~prompt_mask
+                logger.info(
+                    f"[DIAG step=0] mask_token_id={mask_id} | "
+                    f"logits.shape={list(logits.shape)} | "
+                    f"x_t gen unique={gen_slice.unique().tolist()} | "
+                    f"current_mask sum={current_mask_check.sum().item()}/{seq_len - prompt_len} | "
+                    f"logits[0,prompt_len,mask_id]="
+                    f"{output.logits[0, prompt_len, mask_id].item() if mask_id < output.logits.shape[-1] else 'OOB'} "
+                    f"(before suppression) | "
+                    f"logits[0,prompt_len].argmax={output.logits[0, prompt_len].argmax().item()} | "
+                    f"logits[0,prompt_len] top5 tokens={output.logits[0, prompt_len].topk(5).indices.tolist()}"
+                )
+            # ─────────────────────────────────────────────────────────────────
+
             # Apply temperature
             if cfg.temperature != 1.0:
                 logits = logits / cfg.temperature
@@ -156,6 +173,16 @@ class DiffusionSampler:
             positions_to_unmask = positions_to_unmask & ~prompt_mask
 
             n_to_unmask = int(positions_to_unmask.sum().item())
+            # Step-0 post-scheduler diagnostic
+            if step == 0:
+                logger.info(
+                    f"[DIAG step=0 post-sched] "
+                    f"current_mask.sum={current_mask.sum().item()} | "
+                    f"positions_to_unmask.sum={n_to_unmask} | "
+                    f"confidences[0,prompt_len:prompt_len+4]={confidences[0, prompt_len:prompt_len+4].tolist()} | "
+                    f"probs[0,prompt_len].max={probs[0, prompt_len].max().item():.4f} | "
+                    f"probs[0,prompt_len].argmax={probs[0, prompt_len].argmax().item()}"
+                )
             if n_to_unmask > 0:
                 sampled = torch.multinomial(
                     probs.view(-1, probs.shape[-1]), num_samples=1
@@ -166,8 +193,8 @@ class DiffusionSampler:
             if _debug and step % max(1, cfg.num_steps // 8) == 0:
                 n_still_masked = int((x_t[0, prompt_len:] == mask_id).sum().item())
                 gen_len = seq_len - prompt_len
-                logger.debug(
-                    f"step {step:3d}/{cfg.num_steps} | "
+                logger.info(
+                    f"[DBG] step {step:3d}/{cfg.num_steps} | "
                     f"unmasked_this_step={n_to_unmask:4d} | "
                     f"still_masked={n_still_masked}/{gen_len} | "
                     f"gen_tokens={x_t[0, prompt_len:prompt_len+8].tolist()}"  # first 8 gen tokens
