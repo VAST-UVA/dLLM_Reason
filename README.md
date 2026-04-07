@@ -90,7 +90,6 @@ Results are written to `results/eval_<timestamp>/`.
 bash scripts/runs/confidence.sh    # highest-confidence first (LLaDA default)
 bash scripts/runs/random.sh        # uniform random
 bash scripts/runs/linear.sh        # left-to-right
-bash scripts/runs/empty.sh         # no constraint
 bash scripts/runs/cot.sh           # Chain-of-Thought DAG
 bash scripts/runs/skeleton.sh      # Skeleton-then-Detail DAG
 bash scripts/runs/bidirectional.sh # bidirectional DAG
@@ -206,9 +205,8 @@ python scripts/infer_llada.py \
 | Strategy | Description |
 |----------|-------------|
 | `confidence` | Unmask highest-confidence tokens first |
-| `random` | Uniform random unmasking |
+| `random` | Uniform random unmasking (no DAG constraint) |
 | `linear` | Left-to-right sequential |
-| `empty` | No constraint (pure random) |
 | `cot` | Chain-of-Thought segment DAG |
 | `skeleton` | Structural tokens first, then detail |
 | `bidirectional` | Both ends toward center |
