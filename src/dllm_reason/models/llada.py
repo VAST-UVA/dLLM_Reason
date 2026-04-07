@@ -187,15 +187,32 @@ class LLaDAWrapper(DiffusionLM):
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": prompt})
-            text = self.tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
+            # apply_chat_template with tokenize=True avoids the double-BOS
+            # problem that occurs when encoding the returned string again.
+            prompt_ids = self.tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                return_tensors="pt",
             )
         else:
-            # Fallback for tokenizers without chat template support
             text = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
-
-        prompt_ids = self.tokenizer.encode(text, return_tensors="pt")
+            prompt_ids = self.tokenizer(text, return_tensors="pt")["input_ids"]
         prompt_len = prompt_ids.shape[1]
+
+        # Diagnostic: verify mask_token_id doesn't collide with prompt-end token
+        _last = prompt_ids[0, -1].item()
+        if _last == self.mask_token_id:
+            print(
+                f"[WARN encode_prompt] last prompt token ({_last}) == mask_token_id "
+                f"({self.mask_token_id}) — model cannot distinguish mask from EOT. "
+                f"Check mask_token_id lookup."
+            )
+        else:
+            print(
+                f"[encode_prompt] prompt_len={prompt_len}, "
+                f"last_prompt_token={_last} ({repr(self.tokenizer.decode([_last]))}), "
+                f"mask_token_id={self.mask_token_id}"
+            )
 
         # Append MASK tokens for generation
         mask_ids = torch.full((1, generation_len), self.mask_token_id, dtype=torch.long)
