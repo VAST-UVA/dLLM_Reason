@@ -1,0 +1,30 @@
+# Default evaluation configuration.
+# All values here can be overridden by passing the corresponding --flag on the CLI.
+
+model:
+  model_id: "checkpoints/llada-instruct"
+  torch_dtype: "bfloat16"      # bfloat16 | float16 | float32
+  device_map: "auto"
+
+inference:
+  num_steps: 128
+  block_length: 32
+  temperature: 0.0             # 0 = greedy argmax
+  cfg_scale: 0.0               # 0 = disabled
+  remasking: "low_confidence"  # low_confidence | random
+  max_new_tokens: 128          # must be divisible by block_length
+
+benchmarks:
+  benchmarks: ["mbpp", "humaneval"]
+  num_samples: null            # null = all samples
+  run_tests: true
+  verbose_errors: false        # true = print per-sample stderr/error logs
+
+dags:
+  dags: ["confidence"]
+  cot_steps: 4
+  mmlu_subjects: null          # null = default subset
+
+output:
+  output_dir: "results"
+  resume: false
