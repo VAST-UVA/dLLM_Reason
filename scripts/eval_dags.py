@@ -24,66 +24,84 @@ import torch
 # Argument parsing
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _load_config(path: str) -> dict:
+    """Load a YAML config file and return a flat dict of all values."""
+    import yaml
+    with open(path) as f:
+        raw = yaml.safe_load(f)
+    # Flatten nested sections into a single dict
+    flat = {}
+    for section in raw.values():
+        if isinstance(section, dict):
+            flat.update(section)
+    return flat
+
+
 def parse_args():
+    # ── Pre-parse to get --config path before building the full parser ────────
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--config", type=str, default=None)
+    pre_args, remaining = pre.parse_known_args()
+
+    # Load config file defaults (if provided)
+    cfg_defaults: dict = {}
+    if pre_args.config:
+        cfg_defaults = _load_config(pre_args.config)
+        print(f"[config] Loaded: {pre_args.config}")
+    elif Path("configs/eval_default.yaml").exists():
+        cfg_defaults = _load_config("configs/eval_default.yaml")
+        print("[config] Loaded: configs/eval_default.yaml (auto-detected)")
+
+    # ── Build main parser — defaults come from config, CLI overrides them ─────
     parser = argparse.ArgumentParser(description="Evaluate LLaDA with DAG unmasking strategies")
+    parser.add_argument("--config", type=str, default=None,
+                        help="Path to YAML config file (defaults to configs/eval_default.yaml)")
+
+    def D(key, fallback):
+        """Return config value if present, else fallback."""
+        return cfg_defaults.get(key, fallback)
 
     # Model
-    parser.add_argument("--model_id", type=str, default="GSAI-ML/LLaDA-8B-Instruct",
-                        help="HuggingFace model ID for LLaDA")
-    parser.add_argument("--torch_dtype", type=str, default="bfloat16",
+    parser.add_argument("--model_id", type=str, default=D("model_id", "GSAI-ML/LLaDA-8B-Instruct"))
+    parser.add_argument("--torch_dtype", type=str, default=D("torch_dtype", "bfloat16"),
                         choices=["bfloat16", "float16", "float32"])
-    parser.add_argument("--device_map", type=str, default="auto",
-                        help="Device map for model loading (auto, cuda:0, cpu)")
+    parser.add_argument("--device_map", type=str, default=D("device_map", "auto"))
 
     # Benchmarks
     parser.add_argument("--benchmarks", nargs="+",
-                        default=["mbpp", "humaneval", "hotpotqa", "mmlu"],
-                        choices=["mbpp", "humaneval", "hotpotqa", "mmlu"],
-                        help="Benchmarks to evaluate on")
-    parser.add_argument("--num_samples", type=int, default=None,
-                        help="Limit number of samples per benchmark (None=all)")
+                        default=D("benchmarks", ["mbpp", "humaneval"]),
+                        choices=["mbpp", "humaneval", "hotpotqa", "mmlu"])
+    parser.add_argument("--num_samples", type=int, default=D("num_samples", None))
 
     # DAG strategies
     parser.add_argument("--dags", nargs="+",
-                        default=["empty", "linear", "cot", "skeleton", "bidirectional"],
+                        default=D("dags", ["confidence"]),
                         choices=["empty", "linear", "cot", "bidirectional",
-                                 "confidence", "skeleton", "answer_first"],
-                        help="DAG unmasking strategies to evaluate")
+                                 "confidence", "skeleton", "answer_first"])
 
     # Inference params
-    parser.add_argument("--num_steps", type=int, default=128,
-                        help="Total denoising steps (spread across blocks)")
-    parser.add_argument("--block_length", type=int, default=32,
-                        help="Tokens per denoising block (gen_length must be divisible)")
-    parser.add_argument("--temperature", type=float, default=0.0,
-                        help="Gumbel noise scale; 0 = greedy argmax")
-    parser.add_argument("--cfg_scale", type=float, default=0.0,
-                        help="Classifier-free guidance scale; 0 = disabled")
-    parser.add_argument("--remasking", type=str, default="low_confidence",
-                        choices=["low_confidence", "random"],
-                        help="Remasking strategy within each block")
-    parser.add_argument("--max_new_tokens", type=int, default=128,
-                        help="Tokens to generate (must be divisible by block_length)")
-    parser.add_argument("--generation_len", type=int, default=128,
-                        help="Alias for max_new_tokens (kept for compatibility)")
+    parser.add_argument("--num_steps",    type=int,   default=D("num_steps", 128))
+    parser.add_argument("--block_length", type=int,   default=D("block_length", 32))
+    parser.add_argument("--temperature",  type=float, default=D("temperature", 0.0))
+    parser.add_argument("--cfg_scale",    type=float, default=D("cfg_scale", 0.0))
+    parser.add_argument("--remasking",    type=str,   default=D("remasking", "low_confidence"),
+                        choices=["low_confidence", "random"])
+    parser.add_argument("--max_new_tokens", type=int, default=D("max_new_tokens", 128))
+    parser.add_argument("--generation_len", type=int, default=D("max_new_tokens", 128),
+                        help="Alias for max_new_tokens")
 
-    # CoT DAG params
-    parser.add_argument("--cot_steps", type=int, default=4,
-                        help="Number of reasoning steps for CoT DAG")
+    # CoT / MMLU
+    parser.add_argument("--cot_steps",     type=int,  default=D("cot_steps", 4))
+    parser.add_argument("--mmlu_subjects", nargs="+", default=D("mmlu_subjects", None))
 
-    # MMLU params
-    parser.add_argument("--mmlu_subjects", nargs="+", default=None,
-                        help="MMLU subjects to test (None = default subset)")
-
-    # Output
-    parser.add_argument("--output_dir", type=str, default="results",
-                        help="Directory to save results")
-    parser.add_argument("--resume", action="store_true",
-                        help="Skip already-completed (benchmark, dag) pairs")
-    parser.add_argument("--no_run_tests", action="store_true",
-                        help="Skip code execution (useful for inspecting raw outputs)")
+    # Output / control
+    parser.add_argument("--output_dir",       type=str,  default=D("output_dir", "results"))
+    parser.add_argument("--resume",           action="store_true",
+                        default=D("resume", False))
+    parser.add_argument("--no_run_tests",     action="store_true",
+                        default=not D("run_tests", True))
     parser.add_argument("--no_verbose_errors", action="store_true",
-                        help="Silence per-sample failure logs (stderr/error/timeout)")
+                        default=not D("verbose_errors", True))
 
     return parser.parse_args()
 
