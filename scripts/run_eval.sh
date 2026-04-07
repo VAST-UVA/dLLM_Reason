@@ -1,93 +1,103 @@
 #!/bin/bash
 # ============================================================
 # LLaDA + DAG Unmasking Evaluation
-# Upload this entire project to your server and run:
-#   bash scripts/run_eval.sh
+# All parameters are set in the "Configuration" section below.
+# Run:  bash scripts/run_eval.sh
 # ============================================================
 
 set -e
 
-# ── Configuration ────────────────────────────────────────────
-MODEL_ID="GSAI-ML/LLaDA-8B-Instruct"
-OUTPUT_DIR="results/llada_dag_eval_$(date +%Y%m%d_%H%M%S)"
+# ── Configuration ─────────────────────────────────────────────────────────────
+# Model
+MODEL_ID="checkpoints/llada-instruct"
+TORCH_DTYPE="bfloat16"          # bfloat16 | float16 | float32
+DEVICE_MAP="auto"
+
+# Inference
 NUM_STEPS=128
-NUM_SAMPLES=200          # Set to null to run on all samples
-TEMPERATURE=0.0
-MAX_NEW_TOKENS=512
+BLOCK_LENGTH=32
+TEMPERATURE=0.0                 # 0 = greedy argmax
+CFG_SCALE=0.0                   # 0 = disabled
+REMASKING="low_confidence"      # low_confidence | random
+MAX_NEW_TOKENS=128              # must be divisible by BLOCK_LENGTH
+
+# Benchmarks  (comment out entries to skip)
+BENCHMARKS="mbpp humaneval"
+NUM_SAMPLES=200                 # number of samples per benchmark; leave empty for all
+
+# DAG strategies  (comment out entries to skip)
+DAGS="confidence"
+# DAGS="confidence empty linear cot skeleton bidirectional answer_first"
 COT_STEPS=4
-TORCH_DTYPE="bfloat16"
+MMLU_SUBJECTS=""                # leave empty for default subset
 
-# Benchmarks to run (comment out any you don't want)
-BENCHMARKS="mbpp humaneval hotpotqa mmlu"
+# Output
+OUTPUT_DIR="results/llada_eval_$(date +%Y%m%d_%H%M%S)"
+RESUME=false                    # true = skip already-completed runs
 
-# DAG strategies to test
-DAGS="confidence empty linear cot skeleton bidirectional answer_first"
+# Logging
+RUN_TESTS=true                  # false = skip code execution (inspect outputs only)
+VERBOSE_ERRORS=false            # true = print per-sample stderr/error/timeout logs
 
-# MMLU subjects (leave empty to use default subset)
-MMLU_SUBJECTS=""
-
-# ── Environment setup ────────────────────────────────────────
+# ── Environment check ──────────────────────────────────────────────────────────
 echo "============================================================"
-echo "Setting up environment"
+echo " Environment"
 echo "============================================================"
+python -c "import torch; print(f'PyTorch {torch.__version__} | CUDA {torch.cuda.is_available()} | GPUs {torch.cuda.device_count()}')"
 
-# Check CUDA
-python -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}, GPUs: {torch.cuda.device_count()}')"
-
-# Install package if not installed
 if ! python -c "import dllm_reason" 2>/dev/null; then
-    echo "Installing dllm_reason package..."
+    echo "Installing dllm_reason..."
     pip install -e . --quiet
 fi
 
-# Check HuggingFace cache / login
-echo "HuggingFace cache: ${HF_HOME:-~/.cache/huggingface}"
+if [ ! -d "$MODEL_ID" ]; then
+    echo "[WARN] Model path '$MODEL_ID' not found. Set MODEL_ID or download first."
+fi
 
-# ── Run evaluation ───────────────────────────────────────────
-echo ""
-echo "============================================================"
-echo "Starting evaluation"
-echo "Model:      $MODEL_ID"
-echo "Benchmarks: $BENCHMARKS"
-echo "DAGs:       $DAGS"
-echo "Steps:      $NUM_STEPS"
-echo "Samples:    $NUM_SAMPLES"
-echo "Output:     $OUTPUT_DIR"
-echo "============================================================"
-echo ""
-
+# ── Build command ──────────────────────────────────────────────────────────────
 mkdir -p "$OUTPUT_DIR"
 
-# Build the command
-CMD="python scripts/eval_dags.py \
-    --model_id $MODEL_ID \
-    --benchmarks $BENCHMARKS \
-    --dags $DAGS \
-    --num_steps $NUM_STEPS \
-    --temperature $TEMPERATURE \
-    --max_new_tokens $MAX_NEW_TOKENS \
-    --generation_len $MAX_NEW_TOKENS \
-    --cot_steps $COT_STEPS \
-    --torch_dtype $TORCH_DTYPE \
-    --output_dir $OUTPUT_DIR \
-    --resume"
+CMD="python scripts/eval_dags.py"
+CMD="$CMD --model_id $MODEL_ID"
+CMD="$CMD --torch_dtype $TORCH_DTYPE"
+CMD="$CMD --device_map $DEVICE_MAP"
+CMD="$CMD --benchmarks $BENCHMARKS"
+CMD="$CMD --dags $DAGS"
+CMD="$CMD --num_steps $NUM_STEPS"
+CMD="$CMD --block_length $BLOCK_LENGTH"
+CMD="$CMD --temperature $TEMPERATURE"
+CMD="$CMD --cfg_scale $CFG_SCALE"
+CMD="$CMD --remasking $REMASKING"
+CMD="$CMD --max_new_tokens $MAX_NEW_TOKENS"
+CMD="$CMD --generation_len $MAX_NEW_TOKENS"
+CMD="$CMD --cot_steps $COT_STEPS"
+CMD="$CMD --output_dir $OUTPUT_DIR"
 
-# Add num_samples if set
-if [ -n "$NUM_SAMPLES" ]; then
-    CMD="$CMD --num_samples $NUM_SAMPLES"
-fi
+[ -n "$NUM_SAMPLES" ]    && CMD="$CMD --num_samples $NUM_SAMPLES"
+[ -n "$MMLU_SUBJECTS" ]  && CMD="$CMD --mmlu_subjects $MMLU_SUBJECTS"
+[ "$RESUME" = true ]     && CMD="$CMD --resume"
+[ "$RUN_TESTS" = false ]     && CMD="$CMD --no_run_tests"
+[ "$VERBOSE_ERRORS" = true ] && CMD="$CMD --verbose_errors"
 
-# Add MMLU subjects if set
-if [ -n "$MMLU_SUBJECTS" ]; then
-    CMD="$CMD --mmlu_subjects $MMLU_SUBJECTS"
-fi
-
-# Run with logging
-echo "Command: $CMD"
+# ── Run ────────────────────────────────────────────────────────────────────────
 echo ""
+echo "============================================================"
+echo " Evaluation"
+echo "============================================================"
+echo "  Model       : $MODEL_ID"
+echo "  Benchmarks  : $BENCHMARKS"
+echo "  DAGs        : $DAGS"
+echo "  Steps       : $NUM_STEPS  (block=$BLOCK_LENGTH)"
+echo "  Gen tokens  : $MAX_NEW_TOKENS"
+echo "  Temperature : $TEMPERATURE  CFG=$CFG_SCALE  remasking=$REMASKING"
+echo "  Samples     : ${NUM_SAMPLES:-all}"
+echo "  Output      : $OUTPUT_DIR"
+echo "============================================================"
+echo ""
+
 eval $CMD 2>&1 | tee "$OUTPUT_DIR/eval.log"
 
 echo ""
 echo "============================================================"
-echo "Evaluation complete. Results in: $OUTPUT_DIR"
+echo " Done. Results in: $OUTPUT_DIR"
 echo "============================================================"

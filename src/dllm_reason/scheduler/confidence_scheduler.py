@@ -1,9 +1,4 @@
-"""Confidence-based unmasking scheduler.
-
-Unmasks positions in order of model confidence (highest confidence first).
-This is a strong baseline — the model decides its own unmasking order
-based on how certain it is about each position.
-"""
+"""Confidence-based unmasking scheduler (LLaDA default)."""
 
 from __future__ import annotations
 
@@ -15,10 +10,10 @@ from dllm_reason.utils.registry import SCHEDULER_REGISTRY
 
 @SCHEDULER_REGISTRY.register("confidence")
 class ConfidenceScheduler(UnmaskingScheduler):
-    """Unmask positions with highest model confidence first.
+    """Commit the n_to_select highest-confidence masked positions.
 
-    At each step, among all still-masked positions, select those with
-    the highest confidence (max softmax probability) for unmasking.
+    If block_mask is provided, only positions inside the current block
+    are eligible — this implements LLaDA's block-wise denoising strategy.
     """
 
     def select_positions(
@@ -29,24 +24,27 @@ class ConfidenceScheduler(UnmaskingScheduler):
         is_unmasked: torch.Tensor,
         logits: torch.Tensor,
         confidences: torch.Tensor,
+        block_mask: torch.Tensor | None = None,
+        n_to_select: int = 1,
     ) -> torch.Tensor:
         B, L = current_mask.shape
         device = current_mask.device
 
-        num_masked = current_mask.sum(dim=-1)
-        num_to_unmask = self._compute_num_to_unmask(step, total_steps, num_masked)
+        # Eligible = still masked AND (inside block if block_mask given)
+        eligible = current_mask
+        if block_mask is not None:
+            eligible = eligible & block_mask
 
-        # Mask out already-unmasked positions by setting their confidence to -inf
-        masked_confidences = confidences.clone()
-        masked_confidences[~current_mask] = -float("inf")
+        # Set confidence to -inf for ineligible positions
+        conf = confidences.clone()
+        conf[~eligible] = -float("inf")
 
         result = torch.zeros(B, L, dtype=torch.bool, device=device)
-
         for b in range(B):
-            n = min(num_to_unmask[b].item(), num_masked[b].item())
+            n = min(n_to_select, int(eligible[b].sum().item()))
             if n <= 0:
                 continue
-            _, top_indices = masked_confidences[b].topk(n)
-            result[b, top_indices] = True
+            _, top_idx = conf[b].topk(n)
+            result[b, top_idx] = True
 
         return result
