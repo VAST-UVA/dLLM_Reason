@@ -70,9 +70,5 @@ class UnmaskingScheduler(abc.ABC):
         Returns:
             (batch,) number of positions to unmask
         """
-        # Linear schedule: fraction of remaining to unmask
-        remaining_steps = total_steps - step
-        if remaining_steps <= 0:
-            return num_masked
-        num_to_unmask = (num_masked.float() / remaining_steps).ceil().long()
-        return num_to_unmask.clamp(min=1)
+        # Default: unmask exactly 1 token per step.
+        return torch.ones_like(num_masked)
