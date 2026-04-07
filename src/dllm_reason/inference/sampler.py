@@ -215,8 +215,8 @@ class DiffusionSampler:
 
             if cfg.debug:
                 remaining = int((x[:, b_start:b_end] == mask_id).sum().item())
-                logger.info(
-                    f"[DBG] block {block_idx+1}/{num_blocks} "
+                logger.debug(
+                    f"block {block_idx+1}/{num_blocks} "
                     f"filled {cfg.block_length - remaining}/{cfg.block_length}"
                 )
 

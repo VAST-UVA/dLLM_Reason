@@ -37,7 +37,7 @@ RESUME=false                    # true = skip already-completed runs
 
 # Logging
 RUN_TESTS=true                  # false = skip code execution (inspect outputs only)
-VERBOSE_ERRORS=true             # false = silence per-sample stderr/error logs
+VERBOSE_ERRORS=false            # true = print per-sample stderr/error/timeout logs
 
 # ── Environment check ──────────────────────────────────────────────────────────
 echo "============================================================"
@@ -76,8 +76,8 @@ CMD="$CMD --output_dir $OUTPUT_DIR"
 [ -n "$NUM_SAMPLES" ]    && CMD="$CMD --num_samples $NUM_SAMPLES"
 [ -n "$MMLU_SUBJECTS" ]  && CMD="$CMD --mmlu_subjects $MMLU_SUBJECTS"
 [ "$RESUME" = true ]     && CMD="$CMD --resume"
-[ "$RUN_TESTS" = false ] && CMD="$CMD --no_run_tests"
-[ "$VERBOSE_ERRORS" = false ] && CMD="$CMD --no_verbose_errors"
+[ "$RUN_TESTS" = false ]     && CMD="$CMD --no_run_tests"
+[ "$VERBOSE_ERRORS" = true ] && CMD="$CMD --verbose_errors"
 
 # ── Run ────────────────────────────────────────────────────────────────────────
 echo ""

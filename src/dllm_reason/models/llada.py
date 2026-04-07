@@ -198,21 +198,6 @@ class LLaDAWrapper(DiffusionLM):
             prompt_ids = self.tokenizer(text, return_tensors="pt")["input_ids"]
         prompt_len = prompt_ids.shape[1]
 
-        # Diagnostic: verify mask_token_id doesn't collide with prompt-end token
-        _last = prompt_ids[0, -1].item()
-        if _last == self.mask_token_id:
-            print(
-                f"[WARN encode_prompt] last prompt token ({_last}) == mask_token_id "
-                f"({self.mask_token_id}) — model cannot distinguish mask from EOT. "
-                f"Check mask_token_id lookup."
-            )
-        else:
-            print(
-                f"[encode_prompt] prompt_len={prompt_len}, "
-                f"last_prompt_token={_last} ({repr(self.tokenizer.decode([_last]))}), "
-                f"mask_token_id={self.mask_token_id}"
-            )
-
         # Append MASK tokens for generation
         mask_ids = torch.full((1, generation_len), self.mask_token_id, dtype=torch.long)
         input_ids = torch.cat([prompt_ids, mask_ids], dim=1)
