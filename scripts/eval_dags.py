@@ -75,6 +75,8 @@ def parse_args():
                         help="Skip already-completed (benchmark, dag) pairs")
     parser.add_argument("--no_run_tests", action="store_true",
                         help="Skip code execution (useful for inspecting raw outputs)")
+    parser.add_argument("--no_verbose_errors", action="store_true",
+                        help="Silence per-sample failure logs (stderr/error/timeout)")
 
     return parser.parse_args()
 
@@ -229,6 +231,7 @@ def main():
                 "max_new_tokens": args.max_new_tokens,
                 "num_samples": args.num_samples,
                 "run_tests": not args.no_run_tests,
+                "verbose_errors": not args.no_verbose_errors,
             }
 
             if benchmark_name == "mmlu" and args.mmlu_subjects:

@@ -47,6 +47,7 @@ class BenchmarkEvaluator:
         max_new_tokens: int = 512,
         num_samples: int | None = None,  # None = all
         run_tests: bool = True,          # False = skip code execution, score 0
+        verbose_errors: bool = True,     # False = silence subprocess stderr logs
     ):
         self.model = model
         self.scheduler = scheduler
@@ -56,6 +57,7 @@ class BenchmarkEvaluator:
         self.max_new_tokens = max_new_tokens
         self.num_samples = num_samples
         self.run_tests = run_tests
+        self.verbose_errors = verbose_errors
 
     def _generate(self, prompt: str, system_prompt: str | None = None) -> str:
         return self.model.generate(
@@ -143,11 +145,8 @@ class MBPPEvaluator(BenchmarkEvaluator):
                     "error": run_info["error"],
                 })
 
-            # Log failures immediately so problems are visible in real time
-            if passed == 0:
+            if passed == 0 and self.verbose_errors:
                 detail = sample_details[0]
-                # Always show what code was actually extracted, so mismatched
-                # function names / empty extractions are immediately visible.
                 logger.warning(
                     f"[MBPP {task_id}] FAILED\n"
                     f"  extracted_code: {detail['extracted_code'][:300]!r}\n"
@@ -301,8 +300,7 @@ class HumanEvalEvaluator(BenchmarkEvaluator):
                     "error": run_info["error"],
                 })
 
-            # Log failures immediately
-            if passed == 0:
+            if passed == 0 and self.verbose_errors:
                 detail = sample_details[0]
                 logger.warning(
                     f"[HumanEval {task_id}] FAILED\n"
