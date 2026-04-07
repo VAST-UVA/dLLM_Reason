@@ -223,7 +223,7 @@ def main():
                 "model": model,
                 "scheduler": scheduler,
                 "num_steps": args.num_steps,
-                "temperature": max(args.temperature, 1e-6),
+                "temperature": args.temperature,
                 "max_new_tokens": args.max_new_tokens,
                 "num_samples": args.num_samples,
             }
