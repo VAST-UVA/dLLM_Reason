@@ -35,3 +35,15 @@ dags:
 output:
   output_dir: "results"
   resume: false                # skip runs whose result JSON already exists
+
+# === Detailed output saving ===
+# Master switch: --save_outputs enables writing per-sample files.
+# Individual sub-options control what is included.
+save:
+  save_outputs: false          # master switch; --save_outputs to enable
+  save_qa: true                # save prompt + generated answer per sample
+  save_ground_truth: true      # save reference/canonical answer per sample
+  record_trajectory: false     # record per-step unmasking states (large/slow)
+  output_formats:              # file formats to write
+    - "json"
+    - "xlsx"

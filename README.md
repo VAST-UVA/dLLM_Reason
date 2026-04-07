@@ -112,7 +112,52 @@ output:
   resume: false
 ```
 
-### 5. Single-prompt inference
+### 5. Save per-sample outputs (QA pairs, ground truth, trajectory)
+
+Add `--save_outputs` to any run to write per-sample files alongside the summary JSON:
+
+```bash
+# Default: writes both JSON and Excel
+bash scripts/run_eval.sh --save_outputs
+
+# Use the dedicated script (has comments explaining every option)
+bash scripts/runs/save_outputs.sh --benchmarks mbpp --num_samples 50
+
+# Also record unmasking trajectory (one entry per diffusion step per sample)
+bash scripts/runs/save_outputs.sh --record_trajectory --num_samples 10
+```
+
+Output files written to `results/<run>/`:
+
+| File | Contents |
+|------|----------|
+| `{bench}_{dag}_samples.json` | Full per-sample records: prompt, generated, ground truth, pass/fail |
+| `{bench}_{dag}_samples.xlsx` | Same data as a spreadsheet (one row per sample) |
+| `{bench}_{dag}_trajectory.json` | *(only with `--record_trajectory`)* Decoded token states at each diffusion step |
+
+Control what is included:
+
+```bash
+--save_outputs             # master switch (required)
+--no_save_qa               # omit prompt + generated answer
+--no_save_ground_truth     # omit reference answers
+--record_trajectory        # add per-step unmasking states (large; keep off for big runs)
+--output_formats json      # write only JSON (skip Excel)
+--output_formats xlsx      # write only Excel (skip JSON)
+```
+
+Config file equivalents (`configs/eval_default.yaml`):
+
+```yaml
+save:
+  save_outputs: false       # master switch
+  save_qa: true
+  save_ground_truth: true
+  record_trajectory: false
+  output_formats: ["json", "xlsx"]
+```
+
+### 6. Single-prompt inference
 
 ```bash
 python scripts/infer_llada.py \
