@@ -52,32 +52,10 @@ class LLaDAWrapper(DiffusionLM):
             model_id, trust_remote_code=trust_remote_code
         )
 
-        # LLaDA uses [MASK] as the absorbing-state token.
-        # tokenizer.mask_token_id is unreliable — it may point to an unrelated
-        # special token (e.g. <|startoftext|>).  Look up by token string first.
-        mask_token_id = None
-        for _candidate in ("[MASK]", "<mask>", "[mask]"):
-            _id = tokenizer.convert_tokens_to_ids(_candidate)
-            # convert_tokens_to_ids returns unk_token_id when not found
-            if _id is not None and _id != tokenizer.unk_token_id:
-                mask_token_id = _id
-                logger.info(f"Found mask token '{_candidate}' at id {_id}")
-                break
-        if mask_token_id is None:
-            # Fall back to tokenizer.mask_token_id, then vocab boundary
-            if tokenizer.mask_token_id is not None:
-                mask_token_id = tokenizer.mask_token_id
-                logger.warning(
-                    f"[MASK] token not found by name; using tokenizer.mask_token_id="
-                    f"{mask_token_id} ({tokenizer.decode([mask_token_id])})"
-                )
-            else:
-                mask_token_id = len(tokenizer) - 1
-                logger.warning(
-                    f"[MASK] token not found; falling back to last vocab index {mask_token_id}"
-                )
-
         vocab_size = len(tokenizer)
+
+        # Placeholder — will be overwritten from model.config after loading
+        mask_token_id = vocab_size - 1
 
         super().__init__(
             vocab_size=vocab_size,
@@ -98,10 +76,34 @@ class LLaDAWrapper(DiffusionLM):
         )
         logger.info("LLaDA model loaded.")
 
+        # ── Resolve mask_token_id from model.config (most reliable source) ──
+        # LLaDA stores it as config.mask_token_id.  tokenizer.mask_token_id
+        # points to <|eot_id|> which is NOT the diffusion mask token.
+        cfg = getattr(self._llada, "config", None)
+        if cfg is not None and getattr(cfg, "mask_token_id", None) is not None:
+            self.mask_token_id = cfg.mask_token_id
+            logger.info(
+                f"mask_token_id={self.mask_token_id} "
+                f"({repr(tokenizer.decode([self.mask_token_id]))})"
+                f" — from model.config"
+            )
+        else:
+            # Fallback: look up <|mdm_mask|> or similar by string
+            unk = getattr(tokenizer, "unk_token_id", None)
+            for _cand in ("<|mdm_mask|>", "[MASK]", "<mask>"):
+                _id = tokenizer.convert_tokens_to_ids(_cand)
+                if _id is not None and _id != unk:
+                    self.mask_token_id = _id
+                    logger.info(f"mask_token_id={_id} ({repr(_cand)}) — from tokenizer lookup")
+                    break
+            else:
+                logger.warning(
+                    f"Could not find mask token; keeping fallback id={self.mask_token_id}"
+                )
+
         # Sync vocab_size with model's actual output dimension
-        # (may differ from len(tokenizer) due to padding for GPU alignment)
-        if hasattr(self._llada, "config") and hasattr(self._llada.config, "vocab_size"):
-            self.vocab_size = self._llada.config.vocab_size
+        if cfg is not None and getattr(cfg, "vocab_size", None) is not None:
+            self.vocab_size = cfg.vocab_size
 
         # Freeze by default — we only use it for inference
         for p in self._llada.parameters():
@@ -179,16 +181,13 @@ class LLaDAWrapper(DiffusionLM):
             input_ids: (1, total_len) with MASK tokens in generation positions
             prompt_mask: (1, total_len) True for prompt positions
         """
-        # Always apply the chat template for instruct-tuned models.
-        # Passing raw text without the template causes the model to produce
-        # degenerate predictions (every position gets the same token).
+        # Build input with chat template.
+        # LLaDA's tokenizer does not support the "system" role — passing a
+        # system message produces malformed output (no header tags).
+        # Instead, prepend the system prompt to the user message.
         if hasattr(self.tokenizer, "apply_chat_template"):
-            messages = []
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": prompt})
-            # apply_chat_template with tokenize=True avoids the double-BOS
-            # problem that occurs when encoding the returned string again.
+            user_content = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+            messages = [{"role": "user", "content": user_content}]
             prompt_ids = self.tokenizer.apply_chat_template(
                 messages,
                 add_generation_prompt=True,

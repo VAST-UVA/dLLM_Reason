@@ -24,21 +24,21 @@ from transformers import AutoModel, AutoTokenizer
 
 def _get_mask_token_id(model, tokenizer) -> int:
     """Resolve the mask token id from multiple sources in priority order."""
-    # 1. tokenizer.mask_token_id (works when tokenizer has [MASK] defined)
-    if getattr(tokenizer, "mask_token_id", None) is not None:
-        return tokenizer.mask_token_id
-
-    # 2. model.config.mask_token_id (LLaDA stores it here)
+    # 1. model.config.mask_token_id — most reliable for LLaDA
     cfg = getattr(model, "config", None)
     if cfg is not None and getattr(cfg, "mask_token_id", None) is not None:
         return cfg.mask_token_id
 
-    # 3. Look up by token string
+    # 2. Look up <|mdm_mask|> or similar by token string
     unk = getattr(tokenizer, "unk_token_id", None)
-    for candidate in ("[MASK]", "<mask>", "[mask]"):
+    for candidate in ("<|mdm_mask|>", "[MASK]", "<mask>", "[mask]"):
         tid = tokenizer.convert_tokens_to_ids(candidate)
         if tid is not None and tid != unk:
             return tid
+
+    # 3. tokenizer.mask_token_id last (may point to wrong token for LLaDA)
+    if getattr(tokenizer, "mask_token_id", None) is not None:
+        return tokenizer.mask_token_id
 
     raise ValueError(
         "Cannot find mask_token_id. "
