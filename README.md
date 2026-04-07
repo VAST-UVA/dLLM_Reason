@@ -33,109 +33,151 @@ python scripts/download_datasets.py --mirror https://hf-mirror.com
 
 ## Usage
 
-### 1. Run evaluation (recommended entry point)
+All parameters live in `configs/eval_default.yaml`. CLI flags always override the config.
 
-Edit the configuration block at the top of `scripts/run_eval.sh`, then:
+### 1. Default run (LLaDA + confidence scheduler)
 
 ```bash
 bash scripts/run_eval.sh
+# pass any CLI overrides after the script:
+bash scripts/run_eval.sh --benchmarks mbpp --num_samples 50
+bash scripts/run_eval.sh --dags cot skeleton --num_steps 64
+bash scripts/run_eval.sh --verbose_errors
 ```
 
-Key variables to configure:
+Results are written to `results/eval_<timestamp>/`.
+
+### 2. Per-strategy scripts
+
+`scripts/runs/` contains one script per unmasking strategy:
 
 ```bash
-# scripts/run_eval.sh  -- configuration block
-MODEL_ID="checkpoints/llada-instruct"  # local path to LLaDA weights
-NUM_STEPS=128         # diffusion denoising steps
-BLOCK_LENGTH=32       # tokens per block (MAX_NEW_TOKENS must be divisible by this)
-TEMPERATURE=0.0       # 0 = greedy argmax, >0 = sampling
-CFG_SCALE=0.0         # classifier-free guidance scale (0 = disabled)
-REMASKING="low_confidence"  # low_confidence | random
-MAX_NEW_TOKENS=128    # total generation length
-
-BENCHMARKS="mbpp humaneval"   # space-separated list
-NUM_SAMPLES=200               # samples per benchmark (leave empty for all)
-DAGS="confidence"             # scheduler strategies (see below)
-
-RUN_TESTS=true        # false = skip code execution, only inspect outputs
-VERBOSE_ERRORS=false  # true = print per-sample error logs
+bash scripts/runs/confidence.sh    # highest-confidence first (LLaDA default)
+bash scripts/runs/random.sh        # uniform random
+bash scripts/runs/linear.sh        # left-to-right
+bash scripts/runs/empty.sh         # no constraint
+bash scripts/runs/cot.sh           # Chain-of-Thought DAG
+bash scripts/runs/skeleton.sh      # Skeleton-then-Detail DAG
+bash scripts/runs/bidirectional.sh # bidirectional DAG
+bash scripts/runs/answer_first.sh  # answer region first
+bash scripts/runs/all_strategies.sh  # all 8 strategies in one run
 ```
 
-Results and a full log are written to `results/llada_eval_<timestamp>/`.
-
-### 2. Config file + CLI overrides
-
-All parameters can also be set via `configs/eval_default.yaml` and overridden on the command line:
+All scripts pass extra args through to `eval_dags.py`:
 
 ```bash
-# Use config file defaults
-python scripts/eval_dags.py --config configs/eval_default.yaml
+bash scripts/runs/cot.sh --benchmarks mbpp humaneval --num_samples 100 --cot_steps 6
+```
 
-# Override specific values
+### 3. Direct CLI
+
+```bash
 python scripts/eval_dags.py \
-    --config configs/eval_default.yaml \
-    --num_steps 64 \
-    --temperature 0.5 \
-    --benchmarks mbpp \
-    --num_samples 50 \
-    --verbose_errors
+    --dags confidence cot skeleton \
+    --benchmarks mbpp humaneval \
+    --num_steps 64 --temperature 0.5 \
+    --num_samples 100 \
+    --output_dir results/my_run
 ```
 
-`configs/eval_default.yaml` sections:
+### 4. Config file
+
+Edit `configs/eval_default.yaml` to change defaults:
 
 ```yaml
 model:
   model_id: "checkpoints/llada-instruct"
-  torch_dtype: "bfloat16"   # bfloat16 | float16 | float32
+  torch_dtype: "bfloat16"        # bfloat16 | float16 | float32
 
 inference:
   num_steps: 128
-  block_length: 32
-  temperature: 0.0          # 0 = greedy argmax
-  cfg_scale: 0.0
-  remasking: "low_confidence"
+  block_length: 32               # max_new_tokens must be divisible
+  temperature: 0.0               # 0 = greedy argmax
+  cfg_scale: 0.0                 # 0 = disabled
+  remasking: "low_confidence"    # low_confidence | random
   max_new_tokens: 128
 
 benchmarks:
   benchmarks: ["mbpp", "humaneval"]
-  num_samples: null         # null = all samples
-  run_tests: true
-  verbose_errors: false     # --verbose_errors to enable
+  num_samples: null              # null = full dataset
+  run_tests: true                # false = skip code execution
+  verbose_errors: false          # --verbose_errors to enable
 
 dags:
   dags: ["confidence"]
   cot_steps: 4
+
+output:
+  output_dir: "results"
+  resume: false
 ```
 
-### 3. Standalone single-prompt inference
+### 5. Save per-sample outputs (QA pairs, ground truth, trajectory)
+
+Add `--save_outputs` to any run to write per-sample files alongside the summary JSON:
+
+```bash
+# Default: writes both JSON and Excel
+bash scripts/run_eval.sh --save_outputs
+
+# Use the dedicated script (has comments explaining every option)
+bash scripts/runs/save_outputs.sh --benchmarks mbpp --num_samples 50
+
+# Also record unmasking trajectory (one entry per diffusion step per sample)
+bash scripts/runs/save_outputs.sh --record_trajectory --num_samples 10
+```
+
+Output files written to `results/<run>/`:
+
+| File | Contents |
+|------|----------|
+| `{bench}_{dag}_samples.json` | Full per-sample records: prompt, generated, ground truth, pass/fail |
+| `{bench}_{dag}_samples.xlsx` | Same data as a spreadsheet (one row per sample) |
+| `{bench}_{dag}_trajectory.json` | *(only with `--record_trajectory`)* Decoded token states at each diffusion step |
+
+Control what is included:
+
+```bash
+--save_outputs             # master switch (required)
+--no_save_qa               # omit prompt + generated answer
+--no_save_ground_truth     # omit reference answers
+--record_trajectory        # add per-step unmasking states (large; keep off for big runs)
+--output_formats json      # write only JSON (skip Excel)
+--output_formats xlsx      # write only Excel (skip JSON)
+```
+
+Config file equivalents (`configs/eval_default.yaml`):
+
+```yaml
+save:
+  save_outputs: false       # master switch
+  save_qa: true
+  save_ground_truth: true
+  record_trajectory: false
+  output_formats: ["json", "xlsx"]
+```
+
+### 6. Single-prompt inference
 
 ```bash
 python scripts/infer_llada.py \
     --model_id checkpoints/llada-instruct \
     --prompt "What is 7 * 8?" \
-    --num_steps 128 \
-    --block_length 32 \
-    --temperature 0.0
+    --num_steps 128 --block_length 32 --temperature 0.0
 ```
 
-### Available DAG / scheduler strategies
+### Available strategies
 
 | Strategy | Description |
 |----------|-------------|
-| `confidence` | Unmask highest-confidence tokens first (strong baseline) |
+| `confidence` | Unmask highest-confidence tokens first |
 | `random` | Uniform random unmasking |
-| `linear` | Left-to-right sequential unmasking |
-| `empty` | Standard LLaDA (no DAG constraint) |
-| `cot` | Chain-of-Thought: segment-level dependencies |
-| `skeleton` | Skeleton-then-Detail: structural tokens first |
-| `bidirectional` | Bidirectional chains from both ends |
-| `answer_first` | Answer token unmasked first, reasoning filled in |
-
-Pass multiple strategies to compare in one run:
-
-```bash
-DAGS="confidence empty linear cot skeleton"
-```
+| `linear` | Left-to-right sequential |
+| `empty` | No constraint (pure random) |
+| `cot` | Chain-of-Thought segment DAG |
+| `skeleton` | Structural tokens first, then detail |
+| `bidirectional` | Both ends toward center |
+| `answer_first` | Answer region unmasked before reasoning |
 
 ### Available benchmarks
 
