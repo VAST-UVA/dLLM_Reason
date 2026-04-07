@@ -95,14 +95,31 @@ def parse_args():
     parser.add_argument("--mmlu_subjects", nargs="+", default=D("mmlu_subjects", None))
 
     # Output / control
-    parser.add_argument("--output_dir",       type=str,  default=D("output_dir", "results"))
-    parser.add_argument("--resume",           action="store_true",
-                        default=D("resume", False))
-    parser.add_argument("--no_run_tests",     action="store_true",
+    parser.add_argument("--output_dir",   type=str,  default=D("output_dir", "results"))
+    parser.add_argument("--resume",       action="store_true", default=D("resume", False))
+    parser.add_argument("--no_run_tests", action="store_true",
                         default=not D("run_tests", True))
     parser.add_argument("--verbose_errors", action="store_true",
                         default=D("verbose_errors", False),
                         help="Print per-sample stderr/error/timeout on failure")
+
+    # ── Detailed output saving ─────────────────────────────────────────────────
+    parser.add_argument("--save_outputs", action="store_true",
+                        default=D("save_outputs", False),
+                        help="Save per-sample QA pairs / ground truth to JSON + Excel")
+    parser.add_argument("--no_save_qa", action="store_true",
+                        default=not D("save_qa", True),
+                        help="Exclude prompt+generated output from saved files")
+    parser.add_argument("--no_save_ground_truth", action="store_true",
+                        default=not D("save_ground_truth", True),
+                        help="Exclude reference answers from saved files")
+    parser.add_argument("--record_trajectory", action="store_true",
+                        default=D("record_trajectory", False),
+                        help="Record per-step unmasking states (slow; saved to *_trajectory.json)")
+    parser.add_argument("--output_formats", nargs="+",
+                        default=D("output_formats", ["json", "xlsx"]),
+                        choices=["json", "xlsx"],
+                        help="File formats to write when --save_outputs is on")
 
     return parser.parse_args()
 
@@ -261,6 +278,14 @@ def main():
                 "num_samples": args.num_samples,
                 "run_tests": not args.no_run_tests,
                 "verbose_errors": args.verbose_errors,
+                # detailed output saving
+                "save_outputs": args.save_outputs,
+                "save_dir": output_dir,
+                "save_qa": not args.no_save_qa,
+                "save_ground_truth": not args.no_save_ground_truth,
+                "record_trajectory": args.record_trajectory,
+                "output_formats": args.output_formats,
+                "run_tag": dag_name,
             }
 
             if benchmark_name == "mmlu" and args.mmlu_subjects:
