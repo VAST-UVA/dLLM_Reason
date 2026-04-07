@@ -35,16 +35,6 @@ class DiffusionLM(nn.Module, abc.ABC):
         self.max_seq_len = max_seq_len
         self.mask_token_id = mask_token_id
 
-    @property
-    def suppress_token_ids(self) -> list[int]:
-        """Token ids that must never appear in generated output.
-
-        Base implementation returns only [mask_token_id].
-        Subclasses (e.g. LLaDaModel) should override to include EOS/BOS/PAD
-        and any other special tokens that should not be sampled.
-        """
-        return [self.mask_token_id]
-
     @abc.abstractmethod
     def forward(
         self,
