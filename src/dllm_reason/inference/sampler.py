@@ -99,6 +99,13 @@ class DiffusionSampler:
             steps = tqdm(steps, desc="Sampling", leave=False)
 
         mask_id = self.model.mask_token_id
+        # All token ids to suppress: mask token + EOS/BOS/PAD/special tokens.
+        # Suppress these before confidence scoring so they never influence
+        # position selection or appear in the final output.
+        suppress_ids = [
+            sid for sid in self.model.suppress_token_ids
+            if sid < x_t.shape[-1] or True  # range check done per-vocab below
+        ]
         _debug = cfg.debug if hasattr(cfg, "debug") else False
         prompt_len = int(prompt_mask[0].sum().item()) if prompt_mask is not None else 0
 
@@ -111,12 +118,15 @@ class DiffusionSampler:
             output = self.model.forward(x_t, t)
             logits = output.logits  # (B, L, V)
 
-            # ── 1. Suppress mask token in raw logits ─────────────────────────
-            # Must happen before any probability computation so that the mask
-            # token never dominates confidence scores or gets sampled.
+            # ── 1. Suppress special tokens in raw logits ──────────────────────
+            # Includes mask token, EOS, BOS, PAD, and all other special tokens.
+            # Must happen before any probability computation so they never
+            # influence confidence scores or get sampled.
             logits = logits.clone()
-            if mask_id < logits.shape[-1]:
-                logits[..., mask_id] = -float("inf")
+            V = logits.shape[-1]
+            for sid in suppress_ids:
+                if sid < V:
+                    logits[..., sid] = -float("inf")
 
             # ── 2. Confidence from RAW logits (no temperature distortion) ────
             # The scheduler selects positions by confidence rank; applying
@@ -221,12 +231,17 @@ class DiffusionSampler:
                             -1, sorted_indices, sorted_logits
                         )
 
-                    # Convert to probabilities; hard-zero mask token as a
-                    # final guard against any numerical residue.
+                    # Convert to probabilities; hard-zero all suppress_ids as
+                    # a final guard against numerical residue from temperature
+                    # scaling or top-k/top-p.
                     sample_probs = torch.softmax(sample_logits, dim=-1)
-                    if mask_id < sample_probs.shape[-1]:
+                    _sp = sample_probs.shape[-1]
+                    needs_clone = any(sid < _sp for sid in suppress_ids)
+                    if needs_clone:
                         sample_probs = sample_probs.clone()
-                        sample_probs[..., mask_id] = 0.0
+                        for sid in suppress_ids:
+                            if sid < _sp:
+                                sample_probs[..., sid] = 0.0
 
                     # Re-normalise; fall back to uniform if all zeros.
                     prob_sum = sample_probs.sum(dim=-1, keepdim=True)
@@ -257,14 +272,15 @@ class DiffusionSampler:
                 trajectory.append(x_t.clone())
 
         # Final: force-unmask any remaining masked positions with greedy argmax.
-        # Using argmax (not multinomial) and excluding mask_token_id guarantees
-        # no mask tokens survive into the decoded output.
         remaining_mask = (x_t == self.model.mask_token_id) & ~prompt_mask
         if remaining_mask.any():
             t = torch.full((batch_size,), 0.0, device=device)
             output = self.model.forward(x_t, t)
             final_logits = output.logits.clone()
-            final_logits[..., self.model.mask_token_id] = -float("inf")
+            _V = final_logits.shape[-1]
+            for sid in suppress_ids:
+                if sid < _V:
+                    final_logits[..., sid] = -float("inf")
             sampled = final_logits.argmax(dim=-1)
             x_t = torch.where(remaining_mask, sampled, x_t)
 
