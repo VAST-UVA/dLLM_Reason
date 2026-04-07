@@ -3,7 +3,7 @@
 Usage:
     python scripts/eval_dags.py \
         --benchmarks mbpp humaneval hotpotqa mmlu \
-        --dags empty linear cot skeleton bidirectional \
+        --dags random linear cot skeleton bidirectional \
         --model_id GSAI-ML/LLaDA-8B-Instruct \
         --output_dir results/ \
         --num_steps 128 \
@@ -76,7 +76,7 @@ def parse_args():
     # DAG strategies
     parser.add_argument("--dags", nargs="+",
                         default=D("dags", ["confidence"]),
-                        choices=["empty", "random", "linear", "cot", "bidirectional",
+                        choices=["random", "linear", "cot", "bidirectional",
                                  "confidence", "skeleton", "answer_first"])
 
     # Inference params
@@ -140,7 +140,7 @@ def build_dag_scheduler(dag_name: str, seq_len: int, args, device: torch.device)
     from dllm_reason.scheduler.random_scheduler import RandomScheduler
     from dllm_reason.scheduler.linear_scheduler import LinearScheduler
 
-    if dag_name in ("empty", "random"):
+    if dag_name == "random":
         # No DAG constraints — pure random unmasking
         return RandomScheduler(), None
 
