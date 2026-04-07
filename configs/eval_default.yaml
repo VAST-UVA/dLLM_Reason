@@ -2,7 +2,7 @@
 # All values here can be overridden by passing the corresponding --flag on the CLI.
 
 model:
-  model_id: "GSAI-ML/LLaDA-8B-Instruct"
+  model_id: "checkpoints/llada-instruct"
   torch_dtype: "bfloat16"      # bfloat16 | float16 | float32
   device_map: "auto"
 
