@@ -184,8 +184,27 @@ class DiffusionSampler:
                     f"probs[0,prompt_len].argmax={probs[0, prompt_len].argmax().item()}"
                 )
             if n_to_unmask > 0:
+                # Hard-zero mask token probability at sampling time.
+                # This is a belt-and-suspenders guard: logits[..., mask_id]
+                # was already set to -inf above, but temperature scaling or
+                # top-k/top-p can introduce NaNs/Infs that slip through
+                # softmax.  Zeroing here guarantees mask_id is never sampled
+                # regardless of upstream numerical issues.
+                sample_probs = probs.clone()
+                if mask_id < sample_probs.shape[-1]:
+                    sample_probs[..., mask_id] = 0.0
+                # Re-normalise so multinomial gets a valid distribution.
+                # Any position whose total probability is 0 after zeroing
+                # (shouldn't happen, but guard anyway) falls back to uniform.
+                prob_sum = sample_probs.sum(dim=-1, keepdim=True)
+                zero_rows = (prob_sum == 0).squeeze(-1)  # (B, L)
+                if zero_rows.any():
+                    sample_probs[zero_rows] = 1.0  # uniform fallback
+                    prob_sum[zero_rows.unsqueeze(-1).expand_as(prob_sum)] = sample_probs.shape[-1]
+                sample_probs = sample_probs / prob_sum
+
                 sampled = torch.multinomial(
-                    probs.view(-1, probs.shape[-1]), num_samples=1
+                    sample_probs.view(-1, sample_probs.shape[-1]), num_samples=1
                 ).view(batch_size, seq_len)
                 x_t = torch.where(positions_to_unmask, sampled, x_t)
                 is_unmasked = is_unmasked | positions_to_unmask
