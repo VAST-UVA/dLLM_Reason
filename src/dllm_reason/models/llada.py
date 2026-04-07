@@ -168,20 +168,20 @@ class LLaDAWrapper(DiffusionLM):
             input_ids: (1, total_len) with MASK tokens in generation positions
             prompt_mask: (1, total_len) True for prompt positions
         """
-        if system_prompt:
-            # Use chat template if available
-            if hasattr(self.tokenizer, "apply_chat_template"):
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ]
-                text = self.tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True
-                )
-            else:
-                text = f"{system_prompt}\n\n{prompt}"
+        # Always apply the chat template for instruct-tuned models.
+        # Passing raw text without the template causes the model to produce
+        # degenerate predictions (every position gets the same token).
+        if hasattr(self.tokenizer, "apply_chat_template"):
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": prompt})
+            text = self.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
         else:
-            text = prompt
+            # Fallback for tokenizers without chat template support
+            text = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
 
         prompt_ids = self.tokenizer.encode(text, return_tensors="pt")
         prompt_len = prompt_ids.shape[1]
