@@ -2,6 +2,10 @@
 
 **DAG-Guided Discrete Diffusion Language Models for Reasoning**
 
+[![PyPI version](https://img.shields.io/badge/pip%20install-dllm--reason-blue)](https://github.com/BDeMo/dLLM_Reason)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![CI](https://github.com/BDeMo/dLLM_Reason/actions/workflows/ci.yml/badge.svg)](https://github.com/BDeMo/dLLM_Reason/actions/workflows/ci.yml)
+
 ## Overview
 
 dLLM-Reason is a research framework that enhances reasoning in discrete diffusion language models (dLLMs) by controlling the token unmasking order via DAG (Directed Acyclic Graph) topological structures.
@@ -16,17 +20,23 @@ MDLM|SEDD|D3PM|LLaDA   DAGScheduler          TokenDAG + Templates
 
 ## Installation
 
-### From GitHub (recommended)
+```bash
+pip install dllm-reason
+```
+
+Or install from GitHub (latest dev):
 
 ```bash
-# Full install with all optional extras
-pip install "dllm-reason[dev,library] @ git+https://github.com/BDeMo/dLLM_Reason.git"
-
-# Core only (no FAISS / sentence-transformers)
 pip install "git+https://github.com/BDeMo/dLLM_Reason.git"
 ```
 
-### Editable (development)
+With optional extras (FAISS, sentence-transformers, dev tools):
+
+```bash
+pip install "dllm-reason[dev,library]"
+```
+
+For development (editable install):
 
 ```bash
 git clone https://github.com/BDeMo/dLLM_Reason.git
@@ -334,10 +344,11 @@ All configs use YAML + Hydra/OmegaConf.
 
 ## Documentation
 
+- **[Tutorial: pip install + all-strategies evaluation](docs/tutorial_eval_all_strategies.md)** -- Step-by-step guide to install via pip and run all 8 DAG strategies
 - [`docs/V1.0_RELEASE.md`](docs/V1.0_RELEASE.md) -- Full version history and feature details
 - [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) -- Complete API reference with code examples
-- [`docs/dLLM_Reason_V1.0.pptx`](docs/dLLM_Reason_V1.0.pptx) -- Project presentation (10 slides)
+- [`docs/dLLM_Reason_V1.2.3.pptx`](docs/dLLM_Reason_V1.2.3.pptx) -- Project presentation (12 slides, v1.2.3)
 
 ## License
 
-Research use only.
+MIT License. See [LICENSE](LICENSE) for details.
