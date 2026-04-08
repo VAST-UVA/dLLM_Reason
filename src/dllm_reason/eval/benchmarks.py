@@ -1163,6 +1163,226 @@ class ProntoQAEvaluator(BenchmarkEvaluator):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# GPQA
+# ──────────────────────────────────────────────────────────────────────────────
+
+class GPQAEvaluator(BenchmarkEvaluator):
+    """GPQA: Graduate-level Google-Proof QA (Diamond subset).
+
+    Metrics: Accuracy
+    Format: Multiple choice (A/B/C/D), PhD-level science questions.
+    """
+
+    SYSTEM_PROMPT = (
+        "Answer the following graduate-level science question. "
+        "Think carefully, then respond with just the letter (A, B, C, or D)."
+    )
+
+    XLSX_COLUMNS = [
+        "idx", "question", "choices",
+        "ground_truth", "predicted", "correct",
+    ]
+
+    def evaluate(self) -> dict[str, Any]:
+        from datasets import load_dataset
+
+        # GPQA Diamond is the hardest, expert-validated subset
+        dataset = load_dataset("Idavidrein/gpqa", "gpqa_diamond", split="train")
+        items = list(dataset)
+        if self.num_samples:
+            items = items[:self.num_samples]
+
+        results = []
+        xlsx_rows = []
+
+        for idx, item in enumerate(tqdm(items, desc="GPQA")):
+            question = item["Question"]
+            correct_answer = item["Correct Answer"]
+            choices = [
+                item["Correct Answer"],
+                item["Incorrect Answer 1"],
+                item["Incorrect Answer 2"],
+                item["Incorrect Answer 3"],
+            ]
+            # Deterministic shuffle based on question hash to keep reproducible
+            import hashlib
+            seed = int(hashlib.md5(question.encode()).hexdigest()[:8], 16)
+            rng = __import__("random").Random(seed)
+            rng.shuffle(choices)
+            answer_key = "ABCD"[choices.index(correct_answer)]
+
+            prompt = f"Question: {question}\n"
+            choices_str = ""
+            for letter, choice in zip("ABCD", choices):
+                prompt += f"{letter}. {choice}\n"
+                choices_str += f"{letter}. {choice[:60]}; "
+            prompt += "Answer:"
+
+            generated_raw, trajectory = self._generate(prompt, self.SYSTEM_PROMPT)
+            pred = extract_multiple_choice(generated_raw)
+            is_correct = pred == answer_key
+
+            sample: dict[str, Any] = {
+                "idx": idx,
+                "ground_truth": answer_key,
+                "predicted": pred,
+                "correct": is_correct,
+            }
+            if self.save_qa:
+                sample["prompt"] = prompt
+                sample["raw_output"] = generated_raw
+            if self.save_ground_truth:
+                sample["choices"] = {l: c for l, c in zip("ABCD", choices)}
+                sample["correct_answer_text"] = correct_answer
+            if self.record_trajectory:
+                sample["trajectory"] = trajectory
+
+            results.append(sample)
+
+            xlsx_rows.append({
+                "idx": str(idx),
+                "question": question[:200],
+                "choices": choices_str.rstrip("; "),
+                "ground_truth": answer_key,
+                "predicted": pred or "",
+                "correct": str(is_correct),
+            })
+
+        accuracy = sum(r["correct"] for r in results) / max(len(results), 1)
+        logger.info(f"GPQA accuracy: {accuracy:.4f} ({len(results)} questions)")
+
+        summary = {
+            "benchmark": "gpqa",
+            "accuracy": accuracy,
+            "num_questions": len(results),
+        }
+        self._save_results(xlsx_rows, "gpqa", self.XLSX_COLUMNS, summary)
+
+        return {**summary, "per_example": results}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# AIME (AMC/AIME Competition Math)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class AIMEEvaluator(BenchmarkEvaluator):
+    """AIME: American Invitational Mathematics Examination problems.
+
+    Metrics: Accuracy (exact match on integer answer 000-999)
+    Format: Competition math; answer is always an integer 0-999.
+    """
+
+    SYSTEM_PROMPT = (
+        "You are a math competition expert. Solve the problem step by step. "
+        "The answer is an integer between 000 and 999. "
+        "Give your final answer as a 3-digit number after ####."
+    )
+
+    XLSX_COLUMNS = [
+        "idx", "problem", "ground_truth", "extracted_answer", "correct",
+    ]
+
+    def evaluate(self) -> dict[str, Any]:
+        from datasets import load_dataset
+
+        # Use AI-MO/aimo-validation-aime which has AIME problems
+        try:
+            dataset = load_dataset("AI-MO/aimo-validation-aime", split="train")
+        except Exception:
+            # Fallback: use the broader competition math set
+            try:
+                dataset = load_dataset("Maxwell-Jia/AIME_2024", split="train")
+            except Exception:
+                logger.warning("Could not load AIME dataset — trying contest_math")
+                dataset = load_dataset("hendrycks/competition_math", split="test")
+
+        items = list(dataset)
+        if self.num_samples:
+            items = items[:self.num_samples]
+
+        results = []
+        xlsx_rows = []
+
+        for idx, item in enumerate(tqdm(items, desc="AIME")):
+            # Handle different dataset schemas
+            problem = item.get("problem", item.get("question", ""))
+            answer = str(item.get("answer", item.get("solution", "")))
+
+            # For AIME, extract just the integer answer
+            gt_number = self._extract_aime_answer(answer)
+
+            prompt = (
+                f"Solve the following competition math problem.\n\n"
+                f"Problem: {problem}\n\n"
+                f"Solution (give final integer answer after ####):"
+            )
+            generated_raw, trajectory = self._generate(prompt, self.SYSTEM_PROMPT)
+            pred_number = extract_number(generated_raw) or ""
+
+            is_correct = exact_match(str(pred_number), str(gt_number))
+
+            sample: dict[str, Any] = {
+                "idx": idx,
+                "correct": is_correct,
+            }
+            if self.save_qa:
+                sample["prompt"] = prompt
+                sample["generated"] = generated_raw
+                sample["extracted_answer"] = pred_number
+            if self.save_ground_truth:
+                sample["ground_truth"] = gt_number
+                sample["full_solution"] = answer
+            if self.record_trajectory:
+                sample["trajectory"] = trajectory
+
+            results.append(sample)
+
+            xlsx_rows.append({
+                "idx": str(idx),
+                "problem": problem[:300],
+                "ground_truth": str(gt_number),
+                "extracted_answer": str(pred_number),
+                "correct": str(bool(is_correct)),
+            })
+
+        accuracy = sum(r["correct"] for r in results) / max(len(results), 1)
+        logger.info(f"AIME accuracy: {accuracy:.4f} ({len(results)} problems)")
+
+        summary = {
+            "benchmark": "aime",
+            "accuracy": accuracy,
+            "num_problems": len(results),
+        }
+        self._save_results(xlsx_rows, "aime", self.XLSX_COLUMNS, summary)
+
+        return {**summary, "per_example": results}
+
+    @staticmethod
+    def _extract_aime_answer(text: str) -> str:
+        """Extract integer answer from AIME solution."""
+        # Try #### pattern first
+        if "####" in text:
+            return text.split("####")[-1].strip().replace(",", "")
+        # Try \boxed{}
+        idx = text.rfind("\\boxed{")
+        if idx != -1:
+            start = idx + len("\\boxed{")
+            depth = 1
+            i = start
+            while i < len(text) and depth > 0:
+                if text[i] == "{":
+                    depth += 1
+                elif text[i] == "}":
+                    depth -= 1
+                i += 1
+            if depth == 0:
+                return text[start:i - 1].strip()
+        # Fallback: last number in text
+        numbers = re.findall(r"(-?\d+)", text)
+        return numbers[-1] if numbers else text.strip()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Registry
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -1175,4 +1395,6 @@ BENCHMARK_REGISTRY = {
     "math": MATHEvaluator,
     "arc": ARCEvaluator,
     "prontoqa": ProntoQAEvaluator,
+    "gpqa": GPQAEvaluator,
+    "aime": AIMEEvaluator,
 }

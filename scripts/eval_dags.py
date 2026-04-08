@@ -71,7 +71,8 @@ def parse_args():
     parser.add_argument("--benchmarks", nargs="+",
                         default=D("benchmarks", ["mbpp", "humaneval"]),
                         choices=["mbpp", "humaneval", "hotpotqa", "mmlu",
-                                 "gsm8k", "math", "arc", "prontoqa"])
+                                 "gsm8k", "math", "arc", "prontoqa",
+                                 "gpqa", "aime"])
     parser.add_argument("--num_samples", type=int, default=D("num_samples", None))
 
     # DAG strategies
@@ -364,7 +365,7 @@ def _get_primary_metric(result: dict) -> dict:
     elif bm == "hotpotqa":
         return {"name": "EM", "value": result.get("exact_match", 0.0)}
     # MCQ / reasoning / math benchmarks → accuracy
-    elif bm in ("mmlu", "gsm8k", "math", "arc", "prontoqa"):
+    elif bm in ("mmlu", "gsm8k", "math", "arc", "prontoqa", "gpqa", "aime"):
         return {"name": "accuracy", "value": result.get("accuracy", 0.0)}
     else:
         # Fallback: try common keys
