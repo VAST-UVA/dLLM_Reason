@@ -17,6 +17,10 @@ All baselines, benchmarks, and search methods used in dLLM-Reason, with paper re
 | `skeleton` | Skeleton-then-Detail: generate structural tokens first, then fill details | Ning et al., "Skeleton-of-Thought: Prompting LLMs for Efficient Parallel Generation", 2023. [[arXiv:2307.15337]](https://arxiv.org/abs/2307.15337) |
 | `bidirectional` | Unmask from both ends toward center | Yang et al., "XLNet: Generalized Autoregressive Pretraining for Language Understanding", NeurIPS 2019. [[arXiv:1906.08237]](https://arxiv.org/abs/1906.08237) |
 | `answer_first` | Generate answer region first, then fill reasoning | Zhao et al., "Verify-and-Edit: A Knowledge-Enhanced Chain-of-Thought Framework", 2023. [[arXiv:2305.03268]](https://arxiv.org/abs/2305.03268) |
+| `maskgit_cosine` | MaskGIT cosine schedule: unmask more tokens early, fewer later | Chang et al., "MaskGIT: Masked Generative Image Transformer", CVPR 2022. [[arXiv:2202.04200]](https://arxiv.org/abs/2202.04200) |
+| `critical_token_first` | Unmask highest-KL-from-uniform (most influential) positions first | Inspired by attention rollout / gradient-based token importance; Li et al., "Making the V in VQA Matter", CVPR 2017. [[arXiv:1612.00837]](https://arxiv.org/abs/1612.00837) |
+| `curriculum` | Easy (high confidence + low entropy) tokens first, hard tokens last | Bengio et al., "Curriculum Learning", ICML 2009. [[Paper]](https://dl.acm.org/doi/10.1145/1553374.1553380) |
+| `adaptive_dynamic` | Dynamic soft DAG: constructs pairwise influence graph at runtime (**ours**) | Novel contribution of this work |
 
 ---
 
@@ -32,6 +36,8 @@ All baselines, benchmarks, and search methods used in dLLM-Reason, with paper re
 | MMLU | Knowledge (multi-subject) | Accuracy (5-shot) | Hendrycks et al., "Measuring Massive Multitask Language Understanding", ICLR 2021. [[arXiv:2009.03300]](https://arxiv.org/abs/2009.03300) |
 | HotpotQA | Multi-hop QA | EM / F1 | Yang et al., "HotpotQA: A Dataset for Diverse, Explainable Multi-hop Question Answering", EMNLP 2018. [[arXiv:1809.09600]](https://arxiv.org/abs/1809.09600) |
 | ProntoQA | Logical reasoning | Accuracy | Saparov & He, "Language Models Are Greedy Reasoners: A Systematic Formal Analysis of Chain-of-Thought", ICLR 2023. [[arXiv:2210.01240]](https://arxiv.org/abs/2210.01240) (ProntoQA is the benchmark introduced in this paper) |
+| GPQA | PhD-level science MCQ (diamond subset) | Accuracy | Rein et al., "GPQA: A Graduate-Level Google-Proof Q&A Benchmark", 2023. [[arXiv:2311.12022]](https://arxiv.org/abs/2311.12022) |
+| AIME | Competition math (AMC/AIME), integer answers 000–999 | Accuracy | American Mathematics Competitions, MAA. Problems sourced from Art of Problem Solving. [[AoPS]](https://artofproblemsolving.com/wiki/index.php/AIME_Problems_and_Solutions) |
 
 ---
 

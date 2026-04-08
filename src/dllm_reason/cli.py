@@ -63,3 +63,7 @@ def search_dag():
 
 def visualize_dag():
     _run("visualize_dag.py")
+
+
+def serve():
+    _run("serve.py")

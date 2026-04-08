@@ -53,6 +53,7 @@ After installation the following CLI commands are available globally:
 | `dllm-eval` | `python scripts/evaluate.py` |
 | `dllm-search` | `python scripts/search_dag.py` |
 | `dllm-viz` | `python scripts/visualize_dag.py` |
+| `dllm-serve` | `python scripts/serve.py` |
 
 ### Quick Start
 
@@ -94,7 +95,7 @@ bash scripts/runs/cot.sh           # Chain-of-Thought DAG
 bash scripts/runs/skeleton.sh      # Skeleton-then-Detail DAG
 bash scripts/runs/bidirectional.sh # bidirectional DAG
 bash scripts/runs/answer_first.sh  # answer region first
-bash scripts/runs/all_strategies.sh  # all 8 strategies in one run
+bash scripts/runs/all_strategies.sh  # all 13 strategies in one run
 ```
 
 All scripts pass extra args through to `eval_dags.py`:
@@ -213,6 +214,10 @@ python scripts/infer_llada.py \
 | `skeleton` | Structural tokens first, then detail |
 | `bidirectional` | Both ends toward center |
 | `answer_first` | Answer region unmasked before reasoning |
+| `maskgit_cosine` | MaskGIT cosine schedule: more tokens early, fewer later |
+| `critical_token_first` | Unmask most influential (highest KL) positions first |
+| `curriculum` | Easy tokens first (high confidence + low entropy) |
+| `adaptive_dynamic` | **Dynamic soft DAG** — constructs pairwise influence graph at runtime (ours) |
 
 ### Available benchmarks
 
@@ -226,6 +231,29 @@ python scripts/infer_llada.py \
 | `hotpotqa` | Multi-hop QA | EM / F1 |
 | `arc` | Science reasoning | accuracy |
 | `prontoqa` | Logic reasoning | accuracy |
+| `gpqa` | PhD-level science MCQ | accuracy |
+| `aime` | Competition math (AMC/AIME) | accuracy |
+
+### Model Serving (FastAPI)
+
+```bash
+# Install serving extras
+pip install "dllm-reason[serve]"
+
+# Start REST API server
+dllm-serve --model_id checkpoints/llada-instruct --port 8000
+
+# With 4-bit quantization (requires bitsandbytes + CUDA)
+dllm-serve --model_id checkpoints/llada-instruct --quantize 4bit
+
+# POST /generate — generate with any strategy
+curl -X POST http://localhost:8000/generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "What is 7*8?", "strategy": "confidence", "max_new_tokens": 128}'
+
+# GET /strategies — list available strategies
+# GET /health     — health check
+```
 
 ## Project Structure
 
@@ -233,11 +261,11 @@ python scripts/infer_llada.py \
 src/dllm_reason/
   models/          MDLM, SEDD, D3PM, LLaDA (4 dLLMs)
   graph/           TokenDAG, 6 templates, constraints, visualization
-  scheduler/       Random, Confidence, Linear, DAGScheduler, Adaptive (5 schedulers)
+  scheduler/       Random, Confidence, Linear, Entropy, Semi-AR, MaskGIT, Critical-First, Curriculum, DAGScheduler, Adaptive Dynamic (10 schedulers)
   search/          Evolutionary, Greedy, RL Policy, NOTEARS (4 search methods)
   inference/       DiffusionSampler, DAGSampler
   training/        Pretrain, DAG-aware, Fine-tune, Diffu-GRPO
-  eval/            Metrics, 4 benchmark evaluators, DAG analysis
+  eval/            Metrics, 10 benchmark evaluators, DAG analysis
   library/         DAG Library (store, retrieval, fusion, feedback, merge)
   data/            GSM8K, MATH, ARC, ProntoQA loaders
   utils/           Registry, logging, distributed
@@ -326,6 +354,8 @@ All components independently toggleable for ablation experiments. 7 preset confi
 | MMLU | Knowledge | Accuracy |
 | ARC | Science reasoning | Accuracy |
 | ProntoQA | Logic | Accuracy |
+| GPQA | PhD-level Science MCQ | Accuracy |
+| AIME | Competition math | Accuracy |
 
 ## Configuration
 

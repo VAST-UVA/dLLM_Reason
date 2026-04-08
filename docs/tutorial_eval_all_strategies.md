@@ -39,7 +39,7 @@ Verify the install:
 
 ```bash
 python -c "import dllm_reason; print(dllm_reason.__version__)"
-# → 1.2.3
+# → 1.6.0
 
 dllm-eval-dags --help
 ```
@@ -104,7 +104,8 @@ Results go to `results/all_strategies_<timestamp>/`.
 
 ```bash
 python scripts/eval_dags.py \
-    --dags confidence random linear cot skeleton bidirectional answer_first \
+    --dags confidence random entropy semi_ar maskgit_cosine critical_token_first \
+          curriculum linear cot skeleton bidirectional answer_first adaptive_dynamic \
     --output_dir results/all_strategies_$(date +%Y%m%d_%H%M%S)
 ```
 
@@ -112,7 +113,8 @@ python scripts/eval_dags.py \
 
 ```bash
 dllm-eval-dags \
-    --dags confidence random linear cot skeleton bidirectional answer_first \
+    --dags confidence random entropy semi_ar maskgit_cosine critical_token_first \
+          curriculum linear cot skeleton bidirectional answer_first adaptive_dynamic \
     --output_dir results/all_strategies
 ```
 
@@ -148,7 +150,7 @@ All flags below override the corresponding key in `configs/eval_default.yaml`.
 
 | Flag | Default | Notes |
 |------|---------|-------|
-| `--dags` | `confidence` | space-separated list from the 8 strategies below |
+| `--dags` | `confidence` | space-separated list from the 13 strategies below |
 | `--cot_steps` | `4` | reasoning segments for the `cot` DAG |
 | `--mmlu_subjects` | `null` | restrict MMLU to specific subjects |
 
@@ -163,6 +165,12 @@ All flags below override the corresponding key in `configs/eval_default.yaml`.
 | `skeleton` | Sketch key tokens first, then fill in details |
 | `bidirectional` | Alternates from both ends toward the center |
 | `answer_first` | Generate the answer span first, then supporting tokens |
+| `entropy` | Unmask lowest-entropy (most certain by distribution) positions first |
+| `semi_ar` | Semi-autoregressive: block-by-block L→R, confidence within block |
+| `maskgit_cosine` | MaskGIT cosine schedule: more tokens early, fewer later |
+| `critical_token_first` | Unmask most influential (highest KL from uniform) positions first |
+| `curriculum` | Easy tokens first (high confidence + low entropy), hard tokens last |
+| `adaptive_dynamic` | Dynamic soft DAG: runtime pairwise influence graph (**novel**) |
 
 ### Output saving
 
@@ -188,7 +196,8 @@ All flags below override the corresponding key in `configs/eval_default.yaml`.
 
 ```bash
 python scripts/eval_dags.py \
-    --dags confidence random linear cot skeleton bidirectional answer_first \
+    --dags confidence random entropy semi_ar maskgit_cosine critical_token_first \
+          curriculum linear cot skeleton bidirectional answer_first adaptive_dynamic \
     --save_outputs \
     --output_dir results/all_with_outputs
 ```
@@ -246,7 +255,12 @@ results/all_strategies_20260407_120000/
 ├── confidence_results.json
 ├── random_results.json
 ├── linear_results.json
-├── empty_results.json
+├── entropy_results.json
+├── semi_ar_results.json
+├── maskgit_cosine_results.json
+├── critical_token_first_results.json
+├── curriculum_results.json
+├── adaptive_dynamic_results.json
 ├── cot_results.json
 ├── skeleton_results.json
 ├── bidirectional_results.json
@@ -262,7 +276,8 @@ results/all_strategies_20260407_120000/
     "confidence":   {"pass@1": 0.812},
     "random":       {"pass@1": 0.734},
     "linear":       {"pass@1": 0.756},
-    "empty":        {"pass@1": 0.701},
+    "entropy":      {"pass@1": 0.788},
+    "semi_ar":      {"pass@1": 0.779},
     "cot":          {"pass@1": 0.789},
     "skeleton":     {"pass@1": 0.798},
     "bidirectional":{"pass@1": 0.743},
@@ -278,8 +293,9 @@ results/all_strategies_20260407_120000/
 
 ```bash
 python scripts/eval_dags.py \
-    --dags confidence random linear cot skeleton bidirectional answer_first \
-    --benchmarks mbpp humaneval hotpotqa mmlu \
+    --dags confidence random entropy semi_ar maskgit_cosine critical_token_first \
+          curriculum linear cot skeleton bidirectional answer_first adaptive_dynamic \
+    --benchmarks mbpp humaneval hotpotqa mmlu gsm8k math arc prontoqa gpqa aime \
     --num_steps 128 \
     --max_new_tokens 128 \
     --temperature 0.0 \

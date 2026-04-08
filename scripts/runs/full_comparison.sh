@@ -14,8 +14,8 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 OUTPUT_DIR="results/full_comparison_${TIMESTAMP}"
 
 exec python "$ROOT/scripts/eval_dags.py" \
-    --dags confidence random entropy semi_ar maskgit_cosine critical_token_first curriculum linear cot skeleton bidirectional answer_first \
-    --benchmarks gsm8k math mbpp humaneval arc mmlu \
+    --dags confidence random entropy semi_ar maskgit_cosine critical_token_first curriculum linear cot skeleton bidirectional answer_first adaptive_dynamic \
+    --benchmarks gsm8k math mbpp humaneval arc mmlu hotpotqa prontoqa gpqa aime \
     --save_outputs \
     --output_dir "$OUTPUT_DIR" \
     "$@"
