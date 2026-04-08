@@ -2,7 +2,7 @@
 
 **DAG-Guided Discrete Diffusion Language Models for Reasoning**
 
-[![PyPI version](https://img.shields.io/badge/pip%20install-dllm--reason-blue)](https://github.com/BDeMo/dLLM_Reason)
+[![PyPI version](https://img.shields.io/pypi/v/dllm-reason)](https://pypi.org/project/dllm-reason/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![CI](https://github.com/BDeMo/dLLM_Reason/actions/workflows/ci.yml/badge.svg)](https://github.com/BDeMo/dLLM_Reason/actions/workflows/ci.yml)
 
@@ -10,189 +10,116 @@
 
 dLLM-Reason is a research framework that enhances reasoning in discrete diffusion language models (dLLMs) by controlling the token unmasking order via DAG (Directed Acyclic Graph) topological structures.
 
-**Core idea**: dLLMs generate text by iteratively unmasking tokens. We impose a DAG on unmasking order -- edges encode reasoning dependencies -- so prerequisite steps are generated before downstream conclusions.
+**Core idea**: dLLMs generate text by iteratively unmasking tokens. We impose a DAG on unmasking order — edges encode reasoning dependencies — so prerequisite steps are generated before downstream conclusions.
 
 ```
-Model Layer          Scheduler Layer         DAG Layer
-(what to predict) <-> (where to unmask) <-> (dependency structure)
-MDLM|SEDD|D3PM|LLaDA   DAGScheduler          TokenDAG + Templates
+Model Layer          Scheduler Layer          DAG Layer
+(what to predict) <-> (where to unmask)  <-> (dependency structure)
+MDLM|SEDD|D3PM|LLaDA  13 schedulers          TokenDAG / SpanDAG
 ```
+
+---
 
 ## Installation
 
 ```bash
+# From PyPI
 pip install dllm-reason
-```
 
-Or install from GitHub (latest dev):
-
-```bash
+# From GitHub (latest dev)
 pip install "git+https://github.com/BDeMo/dLLM_Reason.git"
-```
 
-With optional extras (FAISS, sentence-transformers, dev tools):
+# With all extras
+pip install "dllm-reason[dev,library,serve]"
 
-```bash
-pip install "dllm-reason[dev,library]"
-```
-
-For development (editable install):
-
-```bash
+# Editable (development)
 git clone https://github.com/BDeMo/dLLM_Reason.git
 cd dLLM_Reason
-pip install -e ".[dev,library]"
+pip install -e ".[dev,library,serve]"
 ```
 
-After installation the following CLI commands are available globally:
+### Optional Extras
 
-| Command | Equivalent |
-|---------|-----------|
-| `dllm-eval-dags` | `python scripts/eval_dags.py` |
-| `dllm-train` | `python scripts/train.py` |
-| `dllm-eval` | `python scripts/evaluate.py` |
-| `dllm-search` | `python scripts/search_dag.py` |
-| `dllm-viz` | `python scripts/visualize_dag.py` |
-| `dllm-serve` | `python scripts/serve.py` |
+| Extra | Packages | Purpose |
+|-------|----------|---------|
+| `dev` | pytest, pytest-cov, ruff | Testing and linting |
+| `library` | faiss-cpu, sentence-transformers, scikit-learn | DAG Library retrieval |
+| `serve` | fastapi, uvicorn, bitsandbytes | REST API serving + quantization |
 
-### Quick Start
+### CLI Commands
+
+After installation, the following commands are available globally:
+
+| Command | Equivalent | Description |
+|---------|-----------|-------------|
+| `dllm-eval-dags` | `python scripts/eval_dags.py` | Multi-strategy x multi-benchmark evaluation |
+| `dllm-serve` | `python scripts/serve.py` | REST API server with hot-switching strategies |
+| `dllm-train` | `python scripts/train.py` | Model training |
+| `dllm-eval` | `python scripts/evaluate.py` | Single-model evaluation |
+| `dllm-search` | `python scripts/search_dag.py` | DAG structure search |
+| `dllm-viz` | `python scripts/visualize_dag.py` | DAG visualization |
+
+---
+
+## Quick Start
 
 ```bash
-# Download models & datasets
+# 1. Download model & datasets
 python scripts/download_models.py              # -> checkpoints/llada-instruct/
 python scripts/download_datasets.py            # -> datasets/
 
-# HF mirror (China)
+# China HuggingFace mirror
 python scripts/download_models.py --mirror https://hf-mirror.com
 python scripts/download_datasets.py --mirror https://hf-mirror.com
+
+# 2. Smoke test (5 samples, confidence strategy)
+dllm-eval-dags --dags confidence --benchmarks mbpp --num_samples 5
+
+# 3. Full comparison (all 13 strategies x all 10 benchmarks)
+bash scripts/runs/full_comparison.sh
+
+# 4. Start REST API server
+dllm-serve --model_id checkpoints/llada-instruct --quantize 4bit
 ```
+
+---
 
 ## Usage
 
 All parameters live in `configs/eval_default.yaml`. CLI flags always override the config.
 
-### 1. Default run (LLaDA + confidence scheduler)
+### Evaluation
 
 ```bash
+# Default run (LLaDA + confidence)
 bash scripts/run_eval.sh
-# pass any CLI overrides after the script:
-bash scripts/run_eval.sh --benchmarks mbpp --num_samples 50
-bash scripts/run_eval.sh --dags cot skeleton --num_steps 64
-bash scripts/run_eval.sh --verbose_errors
-```
 
-Results are written to `results/eval_<timestamp>/`.
+# Direct CLI — pick strategies and benchmarks
+dllm-eval-dags \
+    --dags confidence entropy adaptive_dynamic cot \
+    --benchmarks gsm8k math mbpp humaneval \
+    --num_steps 128 --num_samples 100 \
+    --save_outputs \
+    --output_dir results/my_run
 
-### 2. Per-strategy scripts
+# Per-strategy convenience scripts
+bash scripts/runs/confidence.sh       # highest-confidence first (LLaDA default)
+bash scripts/runs/random.sh           # uniform random
+bash scripts/runs/entropy.sh          # lowest-entropy first
+bash scripts/runs/semi_ar.sh          # block-by-block L->R
+bash scripts/runs/linear.sh           # strict left-to-right
+bash scripts/runs/cot.sh              # Chain-of-Thought DAG
+bash scripts/runs/skeleton.sh         # skeleton-then-detail DAG
+bash scripts/runs/bidirectional.sh    # both ends toward center
+bash scripts/runs/answer_first.sh     # answer region first
+bash scripts/runs/all_strategies.sh   # all 13 strategies in one run
+bash scripts/runs/full_comparison.sh  # 13 strategies x 10 benchmarks
 
-`scripts/runs/` contains one script per unmasking strategy:
-
-```bash
-bash scripts/runs/confidence.sh    # highest-confidence first (LLaDA default)
-bash scripts/runs/random.sh        # uniform random
-bash scripts/runs/linear.sh        # left-to-right
-bash scripts/runs/cot.sh           # Chain-of-Thought DAG
-bash scripts/runs/skeleton.sh      # Skeleton-then-Detail DAG
-bash scripts/runs/bidirectional.sh # bidirectional DAG
-bash scripts/runs/answer_first.sh  # answer region first
-bash scripts/runs/all_strategies.sh  # all 13 strategies in one run
-```
-
-All scripts pass extra args through to `eval_dags.py`:
-
-```bash
+# All scripts pass extra args through:
 bash scripts/runs/cot.sh --benchmarks mbpp humaneval --num_samples 100 --cot_steps 6
 ```
 
-### 3. Direct CLI
-
-```bash
-python scripts/eval_dags.py \
-    --dags confidence cot skeleton \
-    --benchmarks mbpp humaneval \
-    --num_steps 64 --temperature 0.5 \
-    --num_samples 100 \
-    --output_dir results/my_run
-```
-
-### 4. Config file
-
-Edit `configs/eval_default.yaml` to change defaults:
-
-```yaml
-model:
-  model_id: "checkpoints/llada-instruct"
-  torch_dtype: "bfloat16"        # bfloat16 | float16 | float32
-
-inference:
-  num_steps: 128
-  block_length: 32               # max_new_tokens must be divisible
-  temperature: 0.0               # 0 = greedy argmax
-  cfg_scale: 0.0                 # 0 = disabled
-  remasking: "low_confidence"    # low_confidence | random
-  max_new_tokens: 128
-
-benchmarks:
-  benchmarks: ["mbpp", "humaneval"]
-  num_samples: null              # null = full dataset
-  run_tests: true                # false = skip code execution
-  verbose_errors: false          # --verbose_errors to enable
-
-dags:
-  dags: ["confidence"]
-  cot_steps: 4
-
-output:
-  output_dir: "results"
-  resume: false
-```
-
-### 5. Save per-sample outputs (QA pairs, ground truth, trajectory)
-
-Add `--save_outputs` to any run to write per-sample files alongside the summary JSON:
-
-```bash
-# Default: writes both JSON and Excel
-bash scripts/run_eval.sh --save_outputs
-
-# Use the dedicated script (has comments explaining every option)
-bash scripts/runs/save_outputs.sh --benchmarks mbpp --num_samples 50
-
-# Also record unmasking trajectory (one entry per diffusion step per sample)
-bash scripts/runs/save_outputs.sh --record_trajectory --num_samples 10
-```
-
-Output files written to `results/<run>/`:
-
-| File | Contents |
-|------|----------|
-| `{bench}_{dag}_samples.json` | Full per-sample records: prompt, generated, ground truth, pass/fail |
-| `{bench}_{dag}_samples.xlsx` | Same data as a spreadsheet (one row per sample) |
-| `{bench}_{dag}_trajectory.json` | *(only with `--record_trajectory`)* Decoded token states at each diffusion step |
-
-Control what is included:
-
-```bash
---save_outputs             # master switch (required)
---no_save_qa               # omit prompt + generated answer
---no_save_ground_truth     # omit reference answers
---record_trajectory        # add per-step unmasking states (large; keep off for big runs)
---output_formats json      # write only JSON (skip Excel)
---output_formats xlsx      # write only Excel (skip JSON)
-```
-
-Config file equivalents (`configs/eval_default.yaml`):
-
-```yaml
-save:
-  save_outputs: false       # master switch
-  save_qa: true
-  save_ground_truth: true
-  record_trajectory: false
-  output_formats: ["json", "xlsx"]
-```
-
-### 6. Single-prompt inference
+### Single-Prompt Inference
 
 ```bash
 python scripts/infer_llada.py \
@@ -201,87 +128,145 @@ python scripts/infer_llada.py \
     --num_steps 128 --block_length 32 --temperature 0.0
 ```
 
-### Available strategies
-
-| Strategy | Description |
-|----------|-------------|
-| `confidence` | Unmask highest-confidence tokens first |
-| `random` | Uniform random unmasking (no DAG constraint) |
-| `entropy` | Lowest-entropy (most certain by distribution) first |
-| `semi_ar` | Semi-autoregressive: block-by-block L→R, confidence within block |
-| `linear` | Left-to-right sequential |
-| `cot` | Chain-of-Thought segment DAG |
-| `skeleton` | Structural tokens first, then detail |
-| `bidirectional` | Both ends toward center |
-| `answer_first` | Answer region unmasked before reasoning |
-| `maskgit_cosine` | MaskGIT cosine schedule: more tokens early, fewer later |
-| `critical_token_first` | Unmask most influential (highest KL) positions first |
-| `curriculum` | Easy tokens first (high confidence + low entropy) |
-| `adaptive_dynamic` | **Dynamic soft DAG** — constructs pairwise influence graph at runtime (ours) |
-
-### Available benchmarks
-
-| Benchmark | Type | Metric |
-|-----------|------|--------|
-| `mbpp` | Python code generation | pass@1 |
-| `humaneval` | Python code generation | pass@1 |
-| `gsm8k` | Math reasoning | exact match |
-| `math` | Competition math | exact match |
-| `mmlu` | Knowledge (multi-subject) | accuracy |
-| `hotpotqa` | Multi-hop QA | EM / F1 |
-| `arc` | Science reasoning | accuracy |
-| `prontoqa` | Logic reasoning | accuracy |
-| `gpqa` | PhD-level science MCQ | accuracy |
-| `aime` | Competition math (AMC/AIME) | accuracy |
-
-### Model Serving (FastAPI)
+### REST API Serving
 
 ```bash
 # Install serving extras
 pip install "dllm-reason[serve]"
 
-# Start REST API server
-dllm-serve --model_id checkpoints/llada-instruct --port 8000
+# Start server (bfloat16 / port 8000)
+dllm-serve --model_id checkpoints/llada-instruct
 
-# With 4-bit quantization (requires bitsandbytes + CUDA)
+# With 4-bit quantization (~5 GB VRAM)
 dllm-serve --model_id checkpoints/llada-instruct --quantize 4bit
 
-# POST /generate — generate with any strategy
+# Generate with any strategy — hot-switchable, no model reload
 curl -X POST http://localhost:8000/generate \
   -H "Content-Type: application/json" \
-  -d '{"prompt": "What is 7*8?", "strategy": "confidence", "max_new_tokens": 128}'
+  -d '{"prompt": "What is 7*8?", "strategy": "adaptive_dynamic", "max_new_tokens": 256}'
 
-# GET /strategies — list available strategies
-# GET /health     — health check
+# List strategies
+curl http://localhost:8000/strategies
+
+# Health check
+curl http://localhost:8000/health
 ```
+
+### Save Per-Sample Outputs
+
+```bash
+dllm-eval-dags --dags confidence cot adaptive_dynamic \
+    --save_outputs \
+    --output_dir results/detailed
+
+# Output files per (benchmark, strategy):
+#   {bench}_{dag}_samples.json   — prompt, generated, ground truth, pass/fail
+#   {bench}_{dag}_samples.xlsx   — same in spreadsheet format
+#   {bench}_{dag}_trajectory.json — per-step unmasking states (with --record_trajectory)
+```
+
+### LaTeX Table Generation
+
+```bash
+# Generate publication-ready comparison table from results
+python scripts/generate_latex_table.py results/summary.json --output paper_table.tex
+```
+
+### Config File
+
+```yaml
+# configs/eval_default.yaml
+model:
+  model_id: "checkpoints/llada-instruct"
+  torch_dtype: "bfloat16"
+
+inference:
+  num_steps: 128
+  block_length: 32
+  temperature: 0.0
+  cfg_scale: 0.0
+  remasking: "low_confidence"
+  max_new_tokens: 128
+
+benchmarks:
+  benchmarks: ["mbpp", "humaneval"]
+  num_samples: null       # null = full dataset
+
+dags:
+  dags: ["confidence"]
+  # choices: confidence | random | entropy | semi_ar | maskgit_cosine
+  #          | critical_token_first | curriculum | linear | cot
+  #          | skeleton | bidirectional | answer_first | adaptive_dynamic
+```
+
+---
+
+## 13 Unmasking Strategies
+
+| Strategy | Type | Description |
+|----------|------|-------------|
+| `confidence` | Flat | Unmask highest model confidence first (LLaDA default) |
+| `random` | Flat | Uniform random unmasking |
+| `entropy` | Flat | Lowest-entropy (most certain by distribution) first |
+| `semi_ar` | Flat | Block-by-block left-to-right, confidence within block |
+| `maskgit_cosine` | Flat | MaskGIT cosine schedule: more tokens early, fewer later |
+| `critical_token_first` | Flat | Highest KL divergence from uniform (most influential) first |
+| `curriculum` | Flat | Easy tokens first (high confidence + low entropy) |
+| `linear` | Flat | Strict left-to-right sequential |
+| `cot` | DAG | Chain-of-Thought: reasoning segments before answer |
+| `skeleton` | DAG | Structural tokens first, then fill details |
+| `bidirectional` | DAG | Both ends toward center |
+| `answer_first` | DAG | Answer region unmasked before reasoning |
+| `adaptive_dynamic` | Dynamic | **Dynamic soft DAG** — constructs pairwise influence graph at runtime (ours) |
+
+---
+
+## 10 Benchmarks
+
+| Benchmark | Type | Metric | Dataset |
+|-----------|------|--------|---------|
+| `mbpp` | Code generation | pass@1 | Google MBPP (Python) |
+| `humaneval` | Code generation | pass@1 | OpenAI HumanEval (Python) |
+| `gsm8k` | Math reasoning | exact match | Grade school math |
+| `math` | Competition math | exact match | MATH (extracts `\boxed{}`) |
+| `mmlu` | Knowledge | accuracy | 57-subject multitask |
+| `hotpotqa` | Multi-hop QA | EM / F1 | Multi-hop reasoning |
+| `arc` | Science reasoning | accuracy | ARC-Challenge |
+| `prontoqa` | Logic reasoning | accuracy | Formal logic |
+| `gpqa` | PhD-level science | accuracy | GPQA Diamond subset |
+| `aime` | Competition math | accuracy | AMC/AIME (integer 000-999) |
+
+---
 
 ## Project Structure
 
 ```
 src/dllm_reason/
   models/          MDLM, SEDD, D3PM, LLaDA (4 dLLMs)
-  graph/           TokenDAG, 6 templates, constraints, visualization
-  scheduler/       Random, Confidence, Linear, Entropy, Semi-AR, MaskGIT, Critical-First, Curriculum, DAGScheduler, Adaptive Dynamic (10 schedulers)
+  graph/           TokenDAG, SpanDAG, 6 templates, constraints, visualization
+  scheduler/       13 unmasking strategies (8 flat + 4 DAG + 1 adaptive dynamic)
   search/          Evolutionary, Greedy, RL Policy, NOTEARS (4 search methods)
-  inference/       DiffusionSampler, DAGSampler
+  inference/       DiffusionSampler (auto-pad, early-stop), DAGSampler
   training/        Pretrain, DAG-aware, Fine-tune, Diffu-GRPO
-  eval/            Metrics, 10 benchmark evaluators, DAG analysis
+  eval/            10 benchmark evaluators, metrics, DAG analysis
   library/         DAG Library (store, retrieval, fusion, feedback, merge)
-  data/            GSM8K, MATH, ARC, ProntoQA loaders
+  data/            Dataset loaders (GSM8K, MATH, ARC, ProntoQA, ...)
   utils/           Registry, logging, distributed
 
 configs/           31 YAML configs (model, graph, search, task, eval, experiment, library)
-scripts/           Train, evaluate, search, visualize, download, server setup
+scripts/           8 Python scripts + 16 shell run scripts
 tests/             DAG, schedulers, models, library (4 test suites)
 notebooks/         DAG exploration, results analysis
-docs/              V1.0 release notes, API reference, presentation
+docs/              Version history, API reference, deployment guide, tutorial, references
 ```
+
+---
 
 ## Key Components
 
 ### TokenDAG
 
-The core data structure. A boolean adjacency matrix on GPU where edge `(i, j)` means "position `i` must unmask before position `j`".
+Boolean adjacency matrix on GPU. Edge `(i, j)` = "position `i` must unmask before `j`".
 
 ```python
 from dllm_reason.graph.dag import TokenDAG
@@ -290,72 +275,71 @@ dag = TokenDAG.linear_chain(seq_len=256)
 ready = dag.ready_positions(is_unmasked)  # one batched GPU op
 ```
 
-**6 templates**: Chain-of-Thought, Answer-First, Skeleton-Detail, Bidirectional, Interleaved, Random.
+6 templates: Chain-of-Thought, Answer-First, Skeleton-Detail, Bidirectional, Interleaved, Random.
+
+### SpanDAG
+
+Coarse-grained DAG over token spans — reduces search space by `span_size^2`.
+
+```python
+from dllm_reason.graph.span_dag import SpanDAG
+
+sdag = SpanDAG.cot(num_spans=8, span_size=32, num_reasoning_steps=4)
+token_dag = sdag.to_token_dag()  # expand for scheduler
+```
 
 ### DAGScheduler
 
-Injects DAG constraints at the scheduler layer -- models need zero modification.
+DAG constraints inject at scheduler layer — models need zero modification.
 
 ```python
 from dllm_reason.scheduler.dag_scheduler import DAGScheduler
-
 scheduler = DAGScheduler(dag, sub_strategy="confidence_topk")
-# sub_strategies: all_ready, confidence_topk, proportional
+```
+
+### Adaptive Dynamic DAG (Novel)
+
+Constructs soft dependency graph at runtime based on pairwise influence between masked positions.
+
+```python
+from dllm_reason.scheduler.adaptive_dynamic_scheduler import AdaptiveDynamicScheduler
+scheduler = AdaptiveDynamicScheduler(influence_threshold=0.3, momentum=0.5)
 ```
 
 ### DAG Search
 
-Automatically discover optimal DAG structures.
+Automatically discover optimal DAG structures via 4 methods.
 
 ```python
 from dllm_reason.search.evolutionary import EvolutionarySearch
-
-searcher = EvolutionarySearch(
-    population_size=20,
-    library=dag_store,           # seed from library
-    task_description="math",
-)
+searcher = EvolutionarySearch(population_size=20, library=dag_store)
 result = searcher.search(model, eval_fn, seq_len=256, budget=200)
-# result.best_dag auto-written back to library
 ```
-
-4 methods: Evolutionary, Greedy, RL Policy, Differentiable (NOTEARS).
 
 ### DAG Library
 
 Persistent storage + retrieval + feedback for DAG structures.
 
 - **Store**: SQLite + FAISS vector index
-- **Retrieval**: 3 channels (semantic, structural, performance) -- independently toggleable
+- **Retrieval**: 3 channels (semantic, structural, performance)
 - **Fusion**: 4 strategies (weighted, RRF, max, voting)
 - **Feedback**: 3 sources (auto benchmark, human rating, Elo tournament)
 - **Merge**: 3 strategies (union, intersection, weighted)
 
-All components independently toggleable for ablation experiments. 7 preset configs in `configs/library/`.
+All components independently toggleable for ablation. 7 preset configs in `configs/library/`.
 
-### Models
+---
+
+## Models
 
 | Model | Type | Reference |
 |-------|------|-----------|
-| MDLM | Absorbing-state continuous-time diffusion | [Sahoo et al., 2024](https://github.com/kuleshov-group/mdlm) |
-| SEDD | Score-entropy discrete diffusion | [Lou et al., 2024](https://github.com/louaaron/Score-Entropy-Discrete-Diffusion) |
+| LLaDA | LLaMA-3 masked diffusion (8B) | [Nie et al., 2025](https://arxiv.org/abs/2502.09992) |
+| MDLM | Absorbing-state continuous-time | [Sahoo et al., 2024](https://arxiv.org/abs/2406.07524) |
+| SEDD | Score-entropy discrete diffusion | [Lou et al., 2024](https://arxiv.org/abs/2310.16834) |
 | D3PM | Discrete-time structured transitions | [Austin et al., 2021](https://arxiv.org/abs/2107.03006) |
-| LLaDA | LLaMA-3 based masked diffusion (8B) | [GSAI-ML](https://github.com/ML-GSAI/LLaDA) |
 
-### Benchmarks
-
-| Benchmark | Type | Metric |
-|-----------|------|--------|
-| GSM8K | Math reasoning | Exact match |
-| MATH | Competition math | Exact match |
-| MBPP | Code generation | pass@1 |
-| HumanEval | Code generation | pass@1 |
-| HotpotQA | Multi-hop QA | EM, F1 |
-| MMLU | Knowledge | Accuracy |
-| ARC | Science reasoning | Accuracy |
-| ProntoQA | Logic | Accuracy |
-| GPQA | PhD-level Science MCQ | Accuracy |
-| AIME | Competition math | Accuracy |
+---
 
 ## Configuration
 
@@ -370,16 +354,19 @@ All configs use YAML + Hydra/OmegaConf.
 | `configs/eval/` | Benchmark settings |
 | `configs/experiment/` | End-to-end experiment combinations |
 | `configs/library/` | DAG Library ablation variants |
-| `configs/eval_default.yaml` | Default evaluation config (used by run_eval.sh) |
+| `configs/eval_default.yaml` | Default evaluation config |
+
+---
 
 ## Documentation
 
-- **[Tutorial: pip install + all-strategies evaluation](docs/tutorial_eval_all_strategies.md)** -- Step-by-step guide to install via pip and run all DAG strategies
-- **[Deployment Guide](docs/deployment.md)** -- REST API serving, quantization, Docker, production deployment
-- **[References](docs/REFERENCES.md)** -- Paper references for all baselines, benchmarks, search methods, and backbone models
-- [`docs/V1.0_RELEASE.md`](docs/V1.0_RELEASE.md) -- Full version history and feature details
-- [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) -- Complete API reference with code examples
-- [`docs/dLLM_Reason_V1.2.3.pptx`](docs/dLLM_Reason_V1.2.3.pptx) -- Project presentation (12 slides, v1.2.3)
+- **[Tutorial: pip install + all-strategies evaluation](docs/tutorial_eval_all_strategies.md)**
+- **[Deployment Guide: REST API, Docker, quantization](docs/deployment.md)**
+- **[API Reference](docs/API_REFERENCE.md)**
+- **[References: paper citations for all components](docs/REFERENCES.md)**
+- **[Version History](docs/V1.0_RELEASE.md)**
+
+---
 
 ## License
 

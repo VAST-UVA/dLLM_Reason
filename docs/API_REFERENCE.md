@@ -1,4 +1,4 @@
-# dLLM-Reason V1.0 API Reference
+# dLLM-Reason API Reference (v1.7.0)
 
 ---
 
@@ -23,13 +23,17 @@ class DiffusionLM(nn.Module):
 | `MDLM` | `models.mdlm` | Absorbing-state masked diffusion. Schedules: geometric, linear, cosine. |
 | `SEDD` | `models.sedd` | Score-entropy discrete diffusion. Score-based parameterization. |
 | `D3PM` | `models.d3pm` | Discrete-time with absorbing/uniform transitions. Hybrid loss. |
-| `LLaDAWrapper` | `models.llada` | Wraps HuggingFace LLaDA-8B-Instruct for inference. |
+| `LLaDAWrapper` | `models.llada` | Wraps HuggingFace LLaDA-8B-Instruct for inference. Supports quantization. |
 
 ```python
-# Example
-from dllm_reason.models.mdlm import MDLM
-model = MDLM(vocab_size=32000, max_seq_len=512, dim=768, num_layers=12, num_heads=12)
-loss = model.compute_loss(x_0)
+# Example: LLaDA with 4-bit quantization
+from dllm_reason.models.llada import LLaDAWrapper
+from transformers import BitsAndBytesConfig
+
+model = LLaDAWrapper(
+    model_id="GSAI-ML/LLaDA-8B-Instruct",
+    quantization_config=BitsAndBytesConfig(load_in_4bit=True),
+)
 ```
 
 ---
@@ -65,13 +69,35 @@ dag.num_edges()    # int
 dag.depth()        # int
 ```
 
+### `SpanDAG`
+
+Coarse-grained DAG over token spans (reduces search space by `span_size^2`).
+
+```python
+from dllm_reason.graph.span_dag import SpanDAG
+
+# Constructors
+sdag = SpanDAG.empty(num_spans=8, span_size=32)
+sdag = SpanDAG.linear_chain(num_spans=8, span_size=32)
+sdag = SpanDAG.cot(num_spans=8, span_size=32, num_reasoning_steps=4)
+sdag = SpanDAG.from_levels(num_spans=8, span_size=32, levels=[[0,1],[2,3],[4,5,6,7]])
+
+# Convert to TokenDAG for scheduler
+token_dag = sdag.to_token_dag()
+
+# Mutation operators (for search)
+sdag.add_edge(src=0, dst=3)
+sdag.remove_edge(src=0, dst=3)
+sdag.is_valid()
+```
+
 ### Templates
 
 ```python
 from dllm_reason.graph.templates import (
     chain_of_thought_dag,      # Sequential reasoning steps, parallel within each
     answer_first_dag,          # Answer tokens first, then reasoning
-    skeleton_then_detail_dag,  # Structure → content
+    skeleton_then_detail_dag,  # Structure -> content
     bidirectional_dag,         # Forward + backward passes
     interleaved_dag,           # Alternating groups
     random_dag,                # Random edges with given density
@@ -92,23 +118,43 @@ class UnmaskingScheduler(ABC):
         step: int, total_steps: int,
         current_mask: Tensor, is_unmasked: Tensor,
         logits: Tensor, confidences: Tensor,
+        block_mask: Tensor | None = None,
+        n_to_select: int = 1,
     ) -> Tensor  # bool tensor of positions to unmask
 ```
 
-### Implementations
+### All 13 Implementations
 
-| Class | Strategy |
-|-------|----------|
-| `RandomScheduler` | Uniform random selection from masked positions |
-| `ConfidenceScheduler` | Highest-confidence masked positions first |
-| `LinearScheduler` | Left-to-right sequential |
-| `DAGScheduler` | DAG-constrained: `ready_positions()` → eligible → sub-strategy |
-| `AdaptiveDAGScheduler` | DAG + confidence-aware with bypass for stuck situations |
+| Class | Module | Strategy | Description |
+|-------|--------|----------|-------------|
+| `ConfidenceScheduler` | `confidence_scheduler` | `confidence` | Highest model confidence first (LLaDA default) |
+| `RandomScheduler` | `random_scheduler` | `random` | Uniform random from masked positions |
+| `LinearScheduler` | `linear_scheduler` | `linear` | Strict left-to-right sequential |
+| `EntropyScheduler` | `entropy_scheduler` | `entropy` | Lowest entropy (most certain by distribution) first |
+| `SemiAutoregressiveScheduler` | `semi_ar_scheduler` | `semi_ar` | Block-by-block L->R, confidence within each block |
+| `MaskGITCosineScheduler` | `maskgit_scheduler` | `maskgit_cosine` | Cosine schedule: unmask more tokens early, fewer later |
+| `CriticalTokenFirstScheduler` | `critical_token_scheduler` | `critical_token_first` | Highest KL divergence from uniform distribution first |
+| `CurriculumScheduler` | `curriculum_scheduler` | `curriculum` | Easy tokens first (high confidence + low entropy) |
+| `DAGScheduler` | `dag_scheduler` | `cot`, `skeleton`, `bidirectional`, `answer_first` | DAG-constrained: ready_positions -> eligible -> sub-strategy |
+| `AdaptiveDAGScheduler` | `dag_scheduler` | — | DAG + confidence-aware with bypass for stuck situations |
+| `AdaptiveDynamicScheduler` | `adaptive_dynamic_scheduler` | `adaptive_dynamic` | **Novel**: Dynamic soft DAG constructed at runtime via pairwise influence |
 
 ```python
+# Simple scheduler
+from dllm_reason.scheduler.confidence_scheduler import ConfidenceScheduler
+scheduler = ConfidenceScheduler()
+
+# DAG-constrained scheduler
 from dllm_reason.scheduler.dag_scheduler import DAGScheduler
 scheduler = DAGScheduler(dag, sub_strategy="confidence_topk")
 # sub_strategy options: "all_ready", "confidence_topk", "proportional"
+
+# Adaptive dynamic DAG (novel)
+from dllm_reason.scheduler.adaptive_dynamic_scheduler import AdaptiveDynamicScheduler
+scheduler = AdaptiveDynamicScheduler(
+    influence_threshold=0.3,  # higher = fewer constraints
+    momentum=0.5,             # EMA smoothing across steps
+)
 ```
 
 ---
@@ -122,16 +168,23 @@ from dllm_reason.inference.sampler import DiffusionSampler, SamplingConfig
 
 config = SamplingConfig(
     num_steps=64,
+    block_length=32,
     temperature=0.8,
-    top_k=50,
-    top_p=0.95,
+    cfg_scale=0.0,
+    remasking="low_confidence",
     show_progress=True,
     record_trajectory=False,
 )
 sampler = DiffusionSampler(model, scheduler, config)
-result = sampler.sample(batch_size=4, seq_len=256)
+result = sampler.sample(prompt_ids=input_ids, prompt_mask=prompt_mask, gen_length=256)
 # result.sequences: (B, L) token ids
+# result.trajectory: list of (B, L) tensors (if record_trajectory=True)
 ```
+
+Features:
+- **Auto-pad**: `gen_length` and `num_steps` automatically adjusted to be divisible by `block_length`/num_blocks
+- **Early-stop**: Skips remaining denoising steps when block is fully unmasked
+- **Trim**: Auto-padded tokens removed before returning
 
 ### `DAGSampler`
 
@@ -158,13 +211,17 @@ result: SearchResult = searcher.search(model, eval_fn, seq_len, budget)
 
 ### Implementations
 
-```python
-from dllm_reason.search.evolutionary import EvolutionarySearch
-from dllm_reason.search.greedy import GreedyEdgeSearch
-from dllm_reason.search.rl_policy import RLPolicySearch
-from dllm_reason.search.differentiable import DifferentiableSearch
+| Class | Module | Description |
+|-------|--------|-------------|
+| `GreedyEdgeSearch` | `search.greedy` | Iterative add/remove single edges, keep best improvement |
+| `EvolutionarySearch` | `search.evolutionary` | Population-based: tournament selection, crossover, topological mutation |
+| `RLPolicySearch` | `search.rl_policy` | DAGPolicyNetwork + REINFORCE |
+| `DifferentiableSearch` | `search.differentiable` | NOTEARS continuous relaxation with augmented Lagrangian |
 
+```python
 # With library integration
+from dllm_reason.search.evolutionary import EvolutionarySearch
+
 searcher = EvolutionarySearch(
     population_size=20,
     library=dag_store,
@@ -197,12 +254,27 @@ score = accuracy_fitness(model, dag, dataset, num_samples=50)
 
 ## 7. Evaluation (`dllm_reason.eval`)
 
-### Benchmark Evaluators
+### All 10 Benchmark Evaluators
+
+| Class | Benchmark | Metric | Dataset |
+|-------|-----------|--------|---------|
+| `MBPPEvaluator` | `mbpp` | pass@1 | Google MBPP (Python) |
+| `HumanEvalEvaluator` | `humaneval` | pass@1 | OpenAI HumanEval (Python) |
+| `GSM8KEvaluator` | `gsm8k` | exact match | Grade school math |
+| `MATHEvaluator` | `math` | exact match | Competition math (extracts `\boxed{}`) |
+| `ARCEvaluator` | `arc` | accuracy | ARC-Challenge (science) |
+| `MMLUEvaluator` | `mmlu` | accuracy | Massive multitask (57 subjects) |
+| `HotpotQAEvaluator` | `hotpotqa` | EM / F1 | Multi-hop QA |
+| `ProntoQAEvaluator` | `prontoqa` | accuracy | Formal logic reasoning |
+| `GPQAEvaluator` | `gpqa` | accuracy | PhD-level science MCQ (diamond subset) |
+| `AIMEEvaluator` | `aime` | accuracy | AMC/AIME competition math (integer 000-999) |
 
 ```python
-from dllm_reason.eval.benchmarks import MBPPEvaluator, HumanEvalEvaluator
-evaluator = MBPPEvaluator(model, scheduler, num_samples=100)
-metrics = evaluator.evaluate()  # {"pass@1": 0.31, ...}
+from dllm_reason.eval.benchmarks import BENCHMARK_REGISTRY
+
+evaluator_cls = BENCHMARK_REGISTRY["gsm8k"]
+evaluator = evaluator_cls(model=model, scheduler=scheduler, num_samples=100)
+metrics = evaluator.evaluate()  # {"accuracy": 0.72, "benchmark": "gsm8k", ...}
 ```
 
 ### DAG Analysis
@@ -210,6 +282,13 @@ metrics = evaluator.evaluate()  # {"pass@1": 0.31, ...}
 ```python
 from dllm_reason.eval.dag_analysis import analyze_dag, compare_dags
 stats = analyze_dag(dag)  # DAGStats(num_edges, depth, width, density, ...)
+```
+
+### LaTeX Table Generation
+
+```python
+# Generate publication-ready comparison table
+python scripts/generate_latex_table.py results/summary.json --output paper_table.tex
 ```
 
 ---
@@ -261,49 +340,73 @@ result = fitness.evaluate(entry, benchmark="gsm8k")
 ### Ablation Toggles
 
 ```python
-# Disable retrieval (ablation)
-config.retrieval.enabled = False
-
-# Single channel only
-config.retrieval.channels = [RetrievalMode.SEMANTIC]
-
-# Switch fusion strategy
-config.fusion.strategy = FusionStrategy.RRF
-
-# Disable Elo
-config.feedback.sources = [FeedbackSource.AUTO]
-
-# Soft constraints
-config.constraint.mode = ConstraintMode.SOFT
-
-# Kill entire library
-config.enabled = False
+config.retrieval.enabled = False              # Disable retrieval
+config.retrieval.channels = [RetrievalMode.SEMANTIC]  # Single channel
+config.fusion.strategy = FusionStrategy.RRF   # Switch fusion
+config.feedback.sources = [FeedbackSource.AUTO]  # Disable Elo
+config.constraint.mode = ConstraintMode.SOFT  # Soft constraints
+config.enabled = False                        # Kill entire library
 ```
 
 ---
 
-## 9. CLI Entry Points
+## 9. Model Serving (`scripts/serve.py`)
+
+### REST API
+
+```python
+# Start server
+dllm-serve --model_id checkpoints/llada-instruct --port 8000 --quantize 4bit
+
+# POST /generate
+curl -X POST http://localhost:8000/generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "What is 7*8?", "strategy": "adaptive_dynamic"}'
+
+# GET /strategies  — list all 13 strategies
+# GET /health      — model status and device info
+```
+
+### Request Parameters
+
+| Parameter | Type | Default | Range |
+|-----------|------|---------|-------|
+| `prompt` | string | required | — |
+| `strategy` | string | `"confidence"` | 13 strategies |
+| `system_prompt` | string | null | — |
+| `max_new_tokens` | int | 128 | 1-2048 |
+| `num_steps` | int | 128 | 1-1024 |
+| `block_length` | int | 32 | 1-512 |
+| `temperature` | float | 0.0 | 0.0-2.0 |
+| `cfg_scale` | float | 0.0 | 0.0-10.0 |
+| `remasking` | string | `"low_confidence"` | `low_confidence`, `random` |
+
+---
+
+## 10. CLI Entry Points
 
 ```bash
-dllm-train    # → scripts/train.py
-dllm-eval     # → scripts/evaluate.py
-dllm-eval-dags # → scripts/eval_dags.py
-dllm-search   # → scripts/search_dag.py
-dllm-viz      # → scripts/visualize_dag.py
+dllm-train      # -> scripts/train.py
+dllm-eval       # -> scripts/evaluate.py
+dllm-eval-dags  # -> scripts/eval_dags.py
+dllm-search     # -> scripts/search_dag.py
+dllm-viz        # -> scripts/visualize_dag.py
+dllm-serve      # -> scripts/serve.py
 ```
 
 ---
 
-## 10. Configuration
+## 11. Configuration
 
 All configs in `configs/` directory, compatible with Hydra/OmegaConf.
 
 | Directory | Files | Purpose |
 |-----------|-------|---------|
-| `configs/model/` | 4 | Model hyperparameters |
+| `configs/model/` | 4 | Model hyperparameters (mdlm, sedd, d3pm, llada) |
 | `configs/graph/` | 5 | DAG template parameters |
 | `configs/search/` | 4 | Search algorithm settings |
 | `configs/task/` | 4 | Dataset paths and preprocessing |
 | `configs/eval/` | 4 | Benchmark evaluation settings |
 | `configs/experiment/` | 3 | End-to-end experiment combos |
 | `configs/library/` | 7 | Library ablation variants |
+| `configs/eval_default.yaml` | 1 | Default evaluation config (used by run_eval.sh) |
