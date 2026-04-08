@@ -886,13 +886,14 @@ class GSM8KEvaluator(BenchmarkEvaluator):
 class MATHEvaluator(BenchmarkEvaluator):
     """MATH: Competition Mathematics.
 
-    Metrics: Accuracy (exact match on normalized answer)
+    Metrics: Accuracy (exact match on extracted final answer)
     Format: Solve a competition math problem.
+    The ground truth answer is inside \\boxed{...} in the solution field.
     """
 
     SYSTEM_PROMPT = (
         "You are a mathematics expert. Solve the problem and "
-        "present your final answer clearly."
+        "present your final answer inside \\boxed{}."
     )
 
     XLSX_COLUMNS = [
@@ -917,13 +918,17 @@ class MATHEvaluator(BenchmarkEvaluator):
             level = item.get("level", "")
             prob_type = item.get("type", "")
 
+            # Extract ground truth from \boxed{...} in the solution
+            gt_answer = self._extract_boxed(solution) or solution
+
             prompt = (
                 f"Solve the following math problem.\n\n"
                 f"Problem: {problem}\n\nSolution:"
             )
             generated_raw, trajectory = self._generate(prompt, self.SYSTEM_PROMPT)
 
-            is_correct = exact_match(generated_raw, solution)
+            pred_answer = self._extract_boxed(generated_raw) or generated_raw
+            is_correct = exact_match(pred_answer, gt_answer)
 
             sample: dict[str, Any] = {
                 "idx": idx,
@@ -962,6 +967,26 @@ class MATHEvaluator(BenchmarkEvaluator):
         self._save_results(xlsx_rows, "math", self.XLSX_COLUMNS, summary)
 
         return {**summary, "per_example": results}
+
+    @staticmethod
+    def _extract_boxed(text: str) -> str | None:
+        """Extract content from the last \\boxed{...} in the text."""
+        # Find the last \boxed{...}, handling nested braces
+        idx = text.rfind("\\boxed{")
+        if idx == -1:
+            return None
+        start = idx + len("\\boxed{")
+        depth = 1
+        i = start
+        while i < len(text) and depth > 0:
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+            i += 1
+        if depth == 0:
+            return text[start:i - 1].strip()
+        return None
 
 
 # ──────────────────────────────────────────────────────────────────────────────

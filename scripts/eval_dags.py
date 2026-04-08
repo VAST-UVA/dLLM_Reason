@@ -357,16 +357,17 @@ def _get_primary_metric(result: dict) -> dict:
         return {"name": "N/A", "value": 0.0}
 
     bm = result.get("benchmark", "")
-    if bm == "mbpp":
+    # Code benchmarks → pass@1
+    if bm in ("mbpp", "humaneval"):
         return {"name": "pass@1", "value": result.get("pass@1", 0.0)}
-    elif bm == "humaneval":
-        return {"name": "pass@1", "value": result.get("pass@1", 0.0)}
+    # QA benchmark → EM
     elif bm == "hotpotqa":
         return {"name": "EM", "value": result.get("exact_match", 0.0)}
-    elif bm == "mmlu":
+    # MCQ / reasoning / math benchmarks → accuracy
+    elif bm in ("mmlu", "gsm8k", "math", "arc", "prontoqa"):
         return {"name": "accuracy", "value": result.get("accuracy", 0.0)}
     else:
-        # Try common keys
+        # Fallback: try common keys
         for key in ["pass@1", "accuracy", "exact_match", "f1"]:
             if key in result:
                 return {"name": key, "value": result[key]}

@@ -20,6 +20,10 @@ class SemiAutoregressiveScheduler(UnmaskingScheduler):
 
     This provides an intermediate baseline between fully parallel
     (confidence) and fully autoregressive generation.
+
+    NOTE: This scheduler ignores the sampler's ``block_mask`` parameter
+    and manages its own block boundaries.  This avoids conflicts with
+    the sampler's block-wise denoising loop.
     """
 
     def __init__(self, block_size: int = 32) -> None:
@@ -50,7 +54,12 @@ class SemiAutoregressiveScheduler(UnmaskingScheduler):
         pos_mask[self.current_block_start:block_end] = True
         pos_mask = pos_mask.unsqueeze(0).expand(B, -1)  # (B, L)
 
-        eligible = current_mask & pos_mask
+        # Intersect with sampler's block_mask if provided, so we only
+        # touch positions the sampler has already designated for this round
+        if block_mask is not None:
+            eligible = current_mask & pos_mask & block_mask
+        else:
+            eligible = current_mask & pos_mask
 
         # If no eligible positions remain in the current block, advance
         while eligible.sum() == 0 and self.current_block_start < L:
