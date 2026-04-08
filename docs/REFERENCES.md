@@ -8,7 +8,7 @@ All baselines, benchmarks, and search methods used in dLLM-Reason, with paper re
 
 | Strategy | Description | Reference |
 |----------|-------------|-----------|
-| `confidence` | Unmask highest-confidence (argmax prob) positions first; LLaDA default | Nie et al., "LLaDA: Large Language Diffusion with mAsking", 2025. [[arXiv:2502.09992]](https://arxiv.org/abs/2502.09992) |
+| `confidence` | Unmask highest-confidence (argmax prob) positions first; LLaDA default | Nie et al., "Large Language Diffusion Models", 2025. [[arXiv:2502.09992]](https://arxiv.org/abs/2502.09992) |
 | `random` | Uniform random unmasking; standard dLLM baseline | Sahoo et al., "Simple and Effective Masked Diffusion Language Models (MDLM)", 2024. [[arXiv:2406.07524]](https://arxiv.org/abs/2406.07524) |
 | `entropy` | Unmask lowest-entropy (most certain by full distribution) first | Chang et al., "MaskGIT: Masked Generative Image Transformer", CVPR 2022. [[arXiv:2202.04200]](https://arxiv.org/abs/2202.04200) |
 | `semi_ar` | Semi-autoregressive: block-by-block L-to-R, confidence within each block | Savinov et al., "Step-unrolled Denoising Autoencoders for Text Generation (SUNDAE)", ICML 2022. [[arXiv:2112.06749]](https://arxiv.org/abs/2112.06749) |
@@ -31,7 +31,7 @@ All baselines, benchmarks, and search methods used in dLLM-Reason, with paper re
 | ARC-Challenge | Science reasoning | Accuracy | Clark et al., "Think you have Solved Question Answering? Try ARC", 2018. [[arXiv:1803.05457]](https://arxiv.org/abs/1803.05457) |
 | MMLU | Knowledge (multi-subject) | Accuracy (5-shot) | Hendrycks et al., "Measuring Massive Multitask Language Understanding", ICLR 2021. [[arXiv:2009.03300]](https://arxiv.org/abs/2009.03300) |
 | HotpotQA | Multi-hop QA | EM / F1 | Yang et al., "HotpotQA: A Dataset for Diverse, Explainable Multi-hop Question Answering", EMNLP 2018. [[arXiv:1809.09600]](https://arxiv.org/abs/1809.09600) |
-| ProntoQA | Logical reasoning | Accuracy | Saparov & He, "Language Models Are Greedy Reasoners: A Systematic Formal Analysis of Chain-of-Thought", ICLR 2023. [[arXiv:2210.01240]](https://arxiv.org/abs/2210.01240) |
+| ProntoQA | Logical reasoning | Accuracy | Saparov & He, "Language Models Are Greedy Reasoners: A Systematic Formal Analysis of Chain-of-Thought", ICLR 2023. [[arXiv:2210.01240]](https://arxiv.org/abs/2210.01240) (ProntoQA is the benchmark introduced in this paper) |
 
 ---
 
@@ -40,8 +40,8 @@ All baselines, benchmarks, and search methods used in dLLM-Reason, with paper re
 | Method | Description | Reference |
 |--------|-------------|-----------|
 | Greedy | Iterative edge add/remove to maximize fitness | Chickering, "Optimal Structure Identification with Greedy Search", JMLR 2002. [[Paper]](https://www.jmlr.org/papers/v3/chickering02b.html) |
-| Evolutionary | Population-based: tournament selection, crossover, mutation | Larranga et al., "Structure Learning of Bayesian Networks by Genetic Algorithms", 1996. General framework; see also GADAG. [[arXiv:2101.10769]](https://arxiv.org/abs/2101.10769) |
-| RL Policy | REINFORCE with Transformer policy to construct DAGs edge-by-edge | Zhu et al., "Causal Discovery with Reinforcement Learning", NeurIPS 2020. [[arXiv:1906.04477]](https://arxiv.org/abs/1906.04477) |
+| Evolutionary | Population-based: tournament selection, crossover, mutation | Larranaga et al., "Structure Learning of Bayesian Networks by Genetic Algorithms: A Performance Analysis of Control Parameters", IEEE TPAMI 1996. [[IEEE]](https://ieeexplore.ieee.org/document/537345); see also Champion et al., "Inferring Large Graphs Using l1-Penalized Likelihood (GADAG)", Statistics and Computing 2018. [[arXiv:1507.02018]](https://arxiv.org/abs/1507.02018) |
+| RL Policy | REINFORCE with Transformer policy to construct DAGs edge-by-edge | Zhu et al., "Causal Discovery with Reinforcement Learning", ICLR 2020. [[arXiv:1906.04477]](https://arxiv.org/abs/1906.04477) |
 | Differentiable (NOTEARS) | Continuous relaxation with augmented Lagrangian acyclicity constraint | Zheng et al., "DAGs with NO TEARS: Continuous Optimization for Structure Learning", NeurIPS 2018. [[arXiv:1803.01422]](https://arxiv.org/abs/1803.01422) |
 
 ---
@@ -50,7 +50,7 @@ All baselines, benchmarks, and search methods used in dLLM-Reason, with paper re
 
 | Model | Type | Reference |
 |-------|------|-----------|
-| LLaDA | LLaMA-3 based masked diffusion (8B) | Nie et al., "LLaDA: Large Language Diffusion with mAsking", 2025. [[arXiv:2502.09992]](https://arxiv.org/abs/2502.09992) |
+| LLaDA | LLaMA-3 based masked diffusion (8B) | Nie et al., "Large Language Diffusion Models", 2025. [[arXiv:2502.09992]](https://arxiv.org/abs/2502.09992) |
 | MDLM | Absorbing-state continuous-time diffusion | Sahoo et al., "Simple and Effective Masked Diffusion Language Models", 2024. [[arXiv:2406.07524]](https://arxiv.org/abs/2406.07524) |
 | SEDD | Score-entropy discrete diffusion | Lou et al., "Discrete Diffusion Modeling by Estimating the Ratios of the Data Distribution", 2024. [[arXiv:2310.16834]](https://arxiv.org/abs/2310.16834) |
 | D3PM | Discrete-time structured transitions | Austin et al., "Structured Denoising Diffusion Models in Discrete State-Spaces", NeurIPS 2021. [[arXiv:2107.03006]](https://arxiv.org/abs/2107.03006) |
