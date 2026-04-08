@@ -344,7 +344,8 @@ All configs use YAML + Hydra/OmegaConf.
 
 ## Documentation
 
-- **[Tutorial: pip install + all-strategies evaluation](docs/tutorial_eval_all_strategies.md)** -- Step-by-step guide to install via pip and run all 8 DAG strategies
+- **[Tutorial: pip install + all-strategies evaluation](docs/tutorial_eval_all_strategies.md)** -- Step-by-step guide to install via pip and run all DAG strategies
+- **[References](docs/REFERENCES.md)** -- Paper references for all baselines, benchmarks, search methods, and backbone models
 - [`docs/V1.0_RELEASE.md`](docs/V1.0_RELEASE.md) -- Full version history and feature details
 - [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) -- Complete API reference with code examples
 - [`docs/dLLM_Reason_V1.2.3.pptx`](docs/dLLM_Reason_V1.2.3.pptx) -- Project presentation (12 slides, v1.2.3)
