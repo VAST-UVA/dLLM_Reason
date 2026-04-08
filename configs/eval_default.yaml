@@ -27,7 +27,8 @@ benchmarks:
 # === DAG / scheduler strategies ===
 dags:
   dags: ["confidence"]
-  # choices: confidence | random | entropy | semi_ar | linear | cot | skeleton | bidirectional | answer_first
+  # choices: confidence | random | entropy | semi_ar | maskgit_cosine | critical_token_first
+  #          | curriculum | linear | cot | skeleton | bidirectional | answer_first | adaptive_dynamic
   cot_steps: 4                 # number of reasoning segments for cot DAG
   mmlu_subjects: null          # null = default subject subset
 

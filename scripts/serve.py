@@ -180,17 +180,12 @@ def main():
 
     print(f"Loading model: {args.model_id}")
 
-    # Quantization kwargs
-    load_kwargs = {
-        "model_id": args.model_id,
-        "torch_dtype": dtype_map[args.torch_dtype],
-        "device_map": "auto",
-    }
-
+    # Build quantization config if requested
+    quant_config = None
     if args.quantize == "4bit":
         print("Loading with 4-bit quantization (bitsandbytes)")
         from transformers import BitsAndBytesConfig
-        load_kwargs["quantization_config"] = BitsAndBytesConfig(
+        quant_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_compute_dtype=dtype_map[args.torch_dtype],
             bnb_4bit_quant_type="nf4",
@@ -198,10 +193,15 @@ def main():
     elif args.quantize == "8bit":
         print("Loading with 8-bit quantization (bitsandbytes)")
         from transformers import BitsAndBytesConfig
-        load_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+        quant_config = BitsAndBytesConfig(load_in_8bit=True)
 
     from dllm_reason.models.llada import LLaDAWrapper
-    _model = LLaDAWrapper(**load_kwargs)
+    _model = LLaDAWrapper(
+        model_id=args.model_id,
+        torch_dtype=dtype_map[args.torch_dtype],
+        device_map="auto",
+        quantization_config=quant_config,
+    )
 
     print(f"Model loaded on {_model.device}, serving at {args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port)
