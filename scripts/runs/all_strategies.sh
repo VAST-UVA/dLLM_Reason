@@ -5,6 +5,6 @@
 set -e
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 exec python "$ROOT/scripts/eval_dags.py" \
-    --dags confidence random entropy semi_ar linear cot skeleton bidirectional answer_first \
+    --dags confidence random entropy semi_ar maskgit_cosine critical_token_first curriculum linear cot skeleton bidirectional answer_first \
     --output_dir "results/all_strategies_$(date +%Y%m%d_%H%M%S)" \
     "$@"

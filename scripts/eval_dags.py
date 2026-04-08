@@ -80,7 +80,8 @@ def parse_args():
                         default=D("dags", ["confidence"]),
                         choices=["random", "linear", "cot", "bidirectional",
                                  "confidence", "skeleton", "answer_first",
-                                 "entropy", "semi_ar"])
+                                 "entropy", "semi_ar",
+                                 "maskgit_cosine", "critical_token_first", "curriculum"])
 
     # Inference params
     parser.add_argument("--num_steps",    type=int,   default=D("num_steps", 128))
@@ -144,6 +145,9 @@ def build_dag_scheduler(dag_name: str, seq_len: int, args, device: torch.device)
     from dllm_reason.scheduler.linear_scheduler import LinearScheduler
     from dllm_reason.scheduler.entropy_scheduler import EntropyScheduler
     from dllm_reason.scheduler.semi_ar_scheduler import SemiAutoregressiveScheduler
+    from dllm_reason.scheduler.maskgit_scheduler import MaskGITCosineScheduler
+    from dllm_reason.scheduler.critical_token_scheduler import CriticalTokenFirstScheduler
+    from dllm_reason.scheduler.curriculum_scheduler import CurriculumScheduler
 
     if dag_name == "random":
         # No DAG constraints — pure random unmasking
@@ -160,6 +164,18 @@ def build_dag_scheduler(dag_name: str, seq_len: int, args, device: torch.device)
     elif dag_name == "semi_ar":
         # Semi-autoregressive: block-by-block left-to-right, confidence within block
         return SemiAutoregressiveScheduler(block_size=args.block_length), None
+
+    elif dag_name == "maskgit_cosine":
+        # MaskGIT cosine schedule: more tokens early, fewer later
+        return MaskGITCosineScheduler(), None
+
+    elif dag_name == "critical_token_first":
+        # Unmask most influential (highest KL from uniform) positions first
+        return CriticalTokenFirstScheduler(), None
+
+    elif dag_name == "curriculum":
+        # Easy (high confidence + low entropy) tokens first, hard tokens last
+        return CurriculumScheduler(), None
 
     elif dag_name == "linear":
         # Left-to-right chain (no DAG object needed, scheduler handles order)
