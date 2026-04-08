@@ -81,7 +81,8 @@ def parse_args():
                         choices=["random", "linear", "cot", "bidirectional",
                                  "confidence", "skeleton", "answer_first",
                                  "entropy", "semi_ar",
-                                 "maskgit_cosine", "critical_token_first", "curriculum"])
+                                 "maskgit_cosine", "critical_token_first", "curriculum",
+                                 "adaptive_dynamic"])
 
     # Inference params
     parser.add_argument("--num_steps",    type=int,   default=D("num_steps", 128))
@@ -176,6 +177,12 @@ def build_dag_scheduler(dag_name: str, seq_len: int, args, device: torch.device)
     elif dag_name == "curriculum":
         # Easy (high confidence + low entropy) tokens first, hard tokens last
         return CurriculumScheduler(), None
+
+    elif dag_name == "adaptive_dynamic":
+        # Dynamic DAG: constructs soft dependencies at runtime based on
+        # pairwise influence between masked positions
+        from dllm_reason.scheduler.adaptive_dynamic_scheduler import AdaptiveDynamicScheduler
+        return AdaptiveDynamicScheduler(), None
 
     elif dag_name == "linear":
         # Left-to-right chain (no DAG object needed, scheduler handles order)
