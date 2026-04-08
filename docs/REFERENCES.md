@@ -49,6 +49,9 @@ All baselines, benchmarks, and search methods used in dLLM-Reason, with paper re
 | Evolutionary | Population-based: tournament selection, crossover, mutation | Larranaga et al., "Structure Learning of Bayesian Networks by Genetic Algorithms: A Performance Analysis of Control Parameters", IEEE TPAMI 1996. [[IEEE]](https://ieeexplore.ieee.org/document/537345); see also Champion et al., "Inferring Large Graphs Using l1-Penalized Likelihood (GADAG)", Statistics and Computing 2018. [[arXiv:1507.02018]](https://arxiv.org/abs/1507.02018) |
 | RL Policy | REINFORCE with Transformer policy to construct DAGs edge-by-edge | Zhu et al., "Causal Discovery with Reinforcement Learning", ICLR 2020. [[arXiv:1906.04477]](https://arxiv.org/abs/1906.04477) |
 | Differentiable (NOTEARS) | Continuous relaxation with augmented Lagrangian acyclicity constraint | Zheng et al., "DAGs with NO TEARS: Continuous Optimization for Structure Learning", NeurIPS 2018. [[arXiv:1803.01422]](https://arxiv.org/abs/1803.01422) |
+| End-to-End DAG Learning | Joint DAG structure + task loss optimization via differentiable scheduling | Novel contribution; builds on NOTEARS + Gumbel-Sigmoid relaxation |
+| NAS-SuperNet (DARTS-like) | Continuous relaxation over span-level superset DAG | Liu et al., "DARTS: Differentiable Architecture Search", ICLR 2019. [[arXiv:1806.09055]](https://arxiv.org/abs/1806.09055) |
+| NAS-Controller (ENAS-like) | GRU controller generates DAG configurations, trained with REINFORCE | Pham et al., "Efficient Neural Architecture Search via Parameter Sharing", ICML 2018. [[arXiv:1802.03268]](https://arxiv.org/abs/1802.03268) |
 
 ---
 

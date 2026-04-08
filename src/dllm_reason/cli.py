@@ -67,3 +67,7 @@ def visualize_dag():
 
 def serve():
     _run("serve.py")
+
+
+def webui():
+    _run("webui.py")

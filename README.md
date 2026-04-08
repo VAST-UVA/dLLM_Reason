@@ -58,6 +58,7 @@ After installation, the following commands are available globally:
 | `dllm-eval` | `python scripts/evaluate.py` | Single-model evaluation |
 | `dllm-search` | `python scripts/search_dag.py` | DAG structure search |
 | `dllm-viz` | `python scripts/visualize_dag.py` | DAG visualization |
+| `dllm-webui` | `python scripts/webui.py` | Interactive Web UI dashboard |
 
 ---
 
@@ -165,6 +166,28 @@ dllm-eval-dags --dags confidence cot adaptive_dynamic \
 #   {bench}_{dag}_trajectory.json — per-step unmasking states (with --record_trajectory)
 ```
 
+### Web UI (Interactive Dashboard)
+
+```bash
+# Install serving extras
+pip install "dllm-reason[serve]"
+
+# Launch Web UI (loads model + opens browser dashboard)
+dllm-webui --model_id checkpoints/llada-instruct --port 7860
+
+# With quantization
+dllm-webui --model_id checkpoints/llada-instruct --quantize 4bit
+
+# Results viewer only (no model, no GPU needed)
+dllm-webui --no_model --port 7860
+```
+
+Features:
+- **Generate**: Interactive text generation with strategy selector
+- **Compare**: Side-by-side comparison of multiple strategies on the same prompt
+- **Trajectory**: Visualize step-by-step unmasking progression
+- **Results**: Browse and compare benchmark results (reads `results/` directory)
+
 ### LaTeX Table Generation
 
 ```bash
@@ -245,7 +268,7 @@ src/dllm_reason/
   models/          MDLM, SEDD, D3PM, LLaDA (4 dLLMs)
   graph/           TokenDAG, SpanDAG, 6 templates, constraints, visualization
   scheduler/       13 unmasking strategies (8 flat + 4 DAG + 1 adaptive dynamic)
-  search/          Evolutionary, Greedy, RL Policy, NOTEARS (4 search methods)
+  search/          Evolutionary, Greedy, RL Policy, NOTEARS, E2E DAG, NAS (6 search methods)
   inference/       DiffusionSampler (auto-pad, early-stop), DAGSampler
   training/        Pretrain, DAG-aware, Fine-tune, Diffu-GRPO
   eval/            10 benchmark evaluators, metrics, DAG analysis
@@ -306,15 +329,35 @@ from dllm_reason.scheduler.adaptive_dynamic_scheduler import AdaptiveDynamicSche
 scheduler = AdaptiveDynamicScheduler(influence_threshold=0.3, momentum=0.5)
 ```
 
-### DAG Search
+### DAG Search (6 Methods)
 
-Automatically discover optimal DAG structures via 4 methods.
+Automatically discover optimal DAG structures.
 
 ```python
+# Evolutionary search
 from dllm_reason.search.evolutionary import EvolutionarySearch
 searcher = EvolutionarySearch(population_size=20, library=dag_store)
 result = searcher.search(model, eval_fn, seq_len=256, budget=200)
+
+# End-to-end DAG learning (differentiable, jointly with task loss)
+from dllm_reason.search.e2e_dag_learner import E2EDAGLearner, E2EConfig
+learner = E2EDAGLearner(config=E2EConfig(lr_dag=3e-3))
+result = learner.search(model, eval_fn, seq_len=256, budget=200)
+
+# NAS-style search (DARTS supernet or ENAS controller)
+from dllm_reason.search.nas_search import NASDAGSearch, NASConfig
+searcher = NASDAGSearch(config=NASConfig(mode="supernet", span_size=16))
+result = searcher.search(model, eval_fn, seq_len=256, budget=200)
 ```
+
+| Method | Type | Description |
+|--------|------|-------------|
+| Greedy | Black-box | Add/remove edges iteratively |
+| Evolutionary | Black-box | Population-based with tournament selection |
+| RL Policy | Black-box | GRU + REINFORCE for edge construction |
+| Differentiable | Gradient | NOTEARS continuous relaxation |
+| E2E DAG Learning | Gradient | Joint DAG + task loss optimization |
+| NAS SuperNet/Controller | Gradient/RL | DARTS or ENAS-style architecture search |
 
 ### DAG Library
 

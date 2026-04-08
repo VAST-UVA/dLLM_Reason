@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dllm-reason"
-version = "1.6.0"
+version = "1.4.0"
 description = "DAG-guided discrete diffusion language models for reasoning"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -63,6 +63,7 @@ dllm-eval-dags = "dllm_reason.cli:eval_dags"
 dllm-search = "dllm_reason.cli:search_dag"
 dllm-viz = "dllm_reason.cli:visualize_dag"
 dllm-serve = "dllm_reason.cli:serve"
+dllm-webui = "dllm_reason.cli:webui"
 
 [project.urls]
 "Homepage" = "https://github.com/BDeMo/dLLM_Reason"
