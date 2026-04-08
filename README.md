@@ -206,6 +206,8 @@ python scripts/infer_llada.py \
 |----------|-------------|
 | `confidence` | Unmask highest-confidence tokens first |
 | `random` | Uniform random unmasking (no DAG constraint) |
+| `entropy` | Lowest-entropy (most certain by distribution) first |
+| `semi_ar` | Semi-autoregressive: block-by-block L→R, confidence within block |
 | `linear` | Left-to-right sequential |
 | `cot` | Chain-of-Thought segment DAG |
 | `skeleton` | Structural tokens first, then detail |

@@ -2,8 +2,8 @@
 
 Usage:
     python scripts/eval_dags.py \
-        --benchmarks mbpp humaneval hotpotqa mmlu \
-        --dags random linear cot skeleton bidirectional \
+        --benchmarks mbpp humaneval hotpotqa mmlu gsm8k math arc prontoqa \
+        --dags confidence random entropy semi_ar linear cot skeleton bidirectional answer_first \
         --model_id GSAI-ML/LLaDA-8B-Instruct \
         --output_dir results/ \
         --num_steps 128 \
@@ -70,14 +70,16 @@ def parse_args():
     # Benchmarks
     parser.add_argument("--benchmarks", nargs="+",
                         default=D("benchmarks", ["mbpp", "humaneval"]),
-                        choices=["mbpp", "humaneval", "hotpotqa", "mmlu"])
+                        choices=["mbpp", "humaneval", "hotpotqa", "mmlu",
+                                 "gsm8k", "math", "arc", "prontoqa"])
     parser.add_argument("--num_samples", type=int, default=D("num_samples", None))
 
     # DAG strategies
     parser.add_argument("--dags", nargs="+",
                         default=D("dags", ["confidence"]),
                         choices=["random", "linear", "cot", "bidirectional",
-                                 "confidence", "skeleton", "answer_first"])
+                                 "confidence", "skeleton", "answer_first",
+                                 "entropy", "semi_ar"])
 
     # Inference params
     parser.add_argument("--num_steps",    type=int,   default=D("num_steps", 128))
@@ -139,6 +141,8 @@ def build_dag_scheduler(dag_name: str, seq_len: int, args, device: torch.device)
     from dllm_reason.scheduler.confidence_scheduler import ConfidenceScheduler
     from dllm_reason.scheduler.random_scheduler import RandomScheduler
     from dllm_reason.scheduler.linear_scheduler import LinearScheduler
+    from dllm_reason.scheduler.entropy_scheduler import EntropyScheduler
+    from dllm_reason.scheduler.semi_ar_scheduler import SemiAutoregressiveScheduler
 
     if dag_name == "random":
         # No DAG constraints — pure random unmasking
@@ -147,6 +151,14 @@ def build_dag_scheduler(dag_name: str, seq_len: int, args, device: torch.device)
     elif dag_name == "confidence":
         # No DAG constraints — confidence-based (LLaDA default)
         return ConfidenceScheduler(), None
+
+    elif dag_name == "entropy":
+        # No DAG constraints — lowest-entropy (most certain) first
+        return EntropyScheduler(), None
+
+    elif dag_name == "semi_ar":
+        # Semi-autoregressive: block-by-block left-to-right, confidence within block
+        return SemiAutoregressiveScheduler(block_size=args.block_length), None
 
     elif dag_name == "linear":
         # Left-to-right chain (no DAG object needed, scheduler handles order)
