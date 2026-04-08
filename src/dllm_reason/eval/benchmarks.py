@@ -1,4 +1,4 @@
-"""Benchmark evaluators for MBPP, HumanEval, HotpotQA, MMLU.
+"""Benchmark evaluators for MBPP, HumanEval, HotpotQA, MMLU, GSM8K, MATH, ARC, ProntoQA.
 
 Each evaluator:
 1. Loads the dataset
@@ -25,6 +25,7 @@ from tqdm import tqdm
 from dllm_reason.eval.metrics import (
     exact_match, f1_score, extract_number,
     extract_multiple_choice, pass_at_k,
+    normalize_answer,
 )
 from dllm_reason.utils.logging import get_logger
 
@@ -792,6 +793,596 @@ class MMLUEvaluator(BenchmarkEvaluator):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# GSM8K
+# ──────────────────────────────────────────────────────────────────────────────
+
+class GSM8KEvaluator(BenchmarkEvaluator):
+    """GSM8K: Grade School Math.
+
+    Metrics: Accuracy (exact match on extracted number)
+    Format: Solve a math word problem step by step.
+    """
+
+    SYSTEM_PROMPT = (
+        "You are a math tutor. Solve the problem step by step, "
+        "then give the final numerical answer after ####."
+    )
+
+    XLSX_COLUMNS = [
+        "idx", "question", "ground_truth", "ground_truth_number",
+        "generated", "extracted_number", "correct",
+    ]
+
+    def evaluate(self) -> dict[str, Any]:
+        from datasets import load_dataset
+
+        dataset = load_dataset("openai/gsm8k", "main", split="test")
+        items = list(dataset)
+        if self.num_samples:
+            items = items[:self.num_samples]
+
+        results = []
+        xlsx_rows = []
+
+        for idx, item in enumerate(tqdm(items, desc="GSM8K")):
+            question = item["question"]
+            answer_raw = item["answer"]
+
+            # Ground truth number is after "####"
+            gt_number = answer_raw.split("####")[-1].strip().replace(",", "")
+
+            prompt = (
+                f"Solve the following math problem step by step.\n\n"
+                f"Problem: {question}\n\nSolution:"
+            )
+            generated_raw, trajectory = self._generate(prompt, self.SYSTEM_PROMPT)
+            extracted = extract_number(generated_raw)
+
+            is_correct = exact_match(extracted or "", gt_number)
+
+            sample: dict[str, Any] = {
+                "idx": idx,
+                "correct": is_correct,
+            }
+            if self.save_qa:
+                sample["prompt"] = prompt
+                sample["generated"] = generated_raw
+                sample["extracted_number"] = extracted
+            if self.save_ground_truth:
+                sample["ground_truth"] = answer_raw
+                sample["ground_truth_number"] = gt_number
+            if self.record_trajectory:
+                sample["trajectory"] = trajectory
+
+            results.append(sample)
+
+            xlsx_rows.append({
+                "idx": str(idx),
+                "question": question,
+                "ground_truth": answer_raw,
+                "ground_truth_number": gt_number,
+                "generated": generated_raw,
+                "extracted_number": extracted or "",
+                "correct": str(bool(is_correct)),
+            })
+
+        accuracy = sum(r["correct"] for r in results) / len(results)
+        logger.info(f"GSM8K accuracy: {accuracy:.4f} ({len(results)} problems)")
+
+        summary = {
+            "benchmark": "gsm8k",
+            "accuracy": accuracy,
+            "num_problems": len(results),
+        }
+        self._save_results(xlsx_rows, "gsm8k", self.XLSX_COLUMNS, summary)
+
+        return {**summary, "per_example": results}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# MATH
+# ──────────────────────────────────────────────────────────────────────────────
+
+class MATHEvaluator(BenchmarkEvaluator):
+    """MATH: Competition Mathematics.
+
+    Metrics: Accuracy (exact match on extracted final answer)
+    Format: Solve a competition math problem.
+    The ground truth answer is inside \\boxed{...} in the solution field.
+    """
+
+    SYSTEM_PROMPT = (
+        "You are a mathematics expert. Solve the problem and "
+        "present your final answer inside \\boxed{}."
+    )
+
+    XLSX_COLUMNS = [
+        "idx", "problem", "level", "type",
+        "ground_truth", "generated", "correct",
+    ]
+
+    def evaluate(self) -> dict[str, Any]:
+        from datasets import load_dataset
+
+        dataset = load_dataset("hendrycks/competition_math", split="test")
+        items = list(dataset)
+        if self.num_samples:
+            items = items[:self.num_samples]
+
+        results = []
+        xlsx_rows = []
+
+        for idx, item in enumerate(tqdm(items, desc="MATH")):
+            problem = item["problem"]
+            solution = item["solution"]
+            level = item.get("level", "")
+            prob_type = item.get("type", "")
+
+            # Extract ground truth from \boxed{...} in the solution
+            gt_answer = self._extract_boxed(solution) or solution
+
+            prompt = (
+                f"Solve the following math problem.\n\n"
+                f"Problem: {problem}\n\nSolution:"
+            )
+            generated_raw, trajectory = self._generate(prompt, self.SYSTEM_PROMPT)
+
+            pred_answer = self._extract_boxed(generated_raw) or generated_raw
+            is_correct = exact_match(pred_answer, gt_answer)
+
+            sample: dict[str, Any] = {
+                "idx": idx,
+                "level": level,
+                "type": prob_type,
+                "correct": is_correct,
+            }
+            if self.save_qa:
+                sample["prompt"] = prompt
+                sample["generated"] = generated_raw
+            if self.save_ground_truth:
+                sample["ground_truth"] = solution
+            if self.record_trajectory:
+                sample["trajectory"] = trajectory
+
+            results.append(sample)
+
+            xlsx_rows.append({
+                "idx": str(idx),
+                "problem": problem,
+                "level": level,
+                "type": prob_type,
+                "ground_truth": solution,
+                "generated": generated_raw,
+                "correct": str(bool(is_correct)),
+            })
+
+        accuracy = sum(r["correct"] for r in results) / len(results)
+        logger.info(f"MATH accuracy: {accuracy:.4f} ({len(results)} problems)")
+
+        summary = {
+            "benchmark": "math",
+            "accuracy": accuracy,
+            "num_problems": len(results),
+        }
+        self._save_results(xlsx_rows, "math", self.XLSX_COLUMNS, summary)
+
+        return {**summary, "per_example": results}
+
+    @staticmethod
+    def _extract_boxed(text: str) -> str | None:
+        """Extract content from the last \\boxed{...} in the text."""
+        # Find the last \boxed{...}, handling nested braces
+        idx = text.rfind("\\boxed{")
+        if idx == -1:
+            return None
+        start = idx + len("\\boxed{")
+        depth = 1
+        i = start
+        while i < len(text) and depth > 0:
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+            i += 1
+        if depth == 0:
+            return text[start:i - 1].strip()
+        return None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ARC
+# ──────────────────────────────────────────────────────────────────────────────
+
+class ARCEvaluator(BenchmarkEvaluator):
+    """ARC: AI2 Reasoning Challenge (Challenge set).
+
+    Metrics: Accuracy
+    Format: Multiple choice science questions.
+    """
+
+    SYSTEM_PROMPT = (
+        "Answer the following science question. "
+        "Think briefly, then respond with just the letter."
+    )
+
+    XLSX_COLUMNS = [
+        "idx", "question", "choices",
+        "ground_truth", "predicted", "correct",
+    ]
+
+    def evaluate(self) -> dict[str, Any]:
+        from datasets import load_dataset
+
+        dataset = load_dataset("allenai/ai2_arc", "ARC-Challenge", split="test")
+        items = list(dataset)
+        if self.num_samples:
+            items = items[:self.num_samples]
+
+        results = []
+        xlsx_rows = []
+
+        for idx, item in enumerate(tqdm(items, desc="ARC")):
+            question = item["question"]
+            labels = item["choices"]["label"]
+            texts = item["choices"]["text"]
+            answer_key = item["answerKey"]
+
+            # Format MCQ
+            prompt = f"Question: {question}\n"
+            choices_str = ""
+            for label, text in zip(labels, texts):
+                prompt += f"{label}. {text}\n"
+                choices_str += f"{label}. {text}; "
+            prompt += "Answer:"
+
+            generated_raw, trajectory = self._generate(prompt, self.SYSTEM_PROMPT)
+            pred = extract_multiple_choice(generated_raw)
+            is_correct = pred == answer_key
+
+            sample: dict[str, Any] = {
+                "idx": idx,
+                "question": question,
+                "ground_truth": answer_key,
+                "predicted": pred,
+                "correct": is_correct,
+            }
+            if self.save_qa:
+                sample["prompt"] = prompt
+                sample["raw_output"] = generated_raw
+            if self.save_ground_truth:
+                sample["choices"] = {l: t for l, t in zip(labels, texts)}
+            if self.record_trajectory:
+                sample["trajectory"] = trajectory
+
+            results.append(sample)
+
+            xlsx_rows.append({
+                "idx": str(idx),
+                "question": question,
+                "choices": choices_str.rstrip("; "),
+                "ground_truth": answer_key,
+                "predicted": pred or "",
+                "correct": str(is_correct),
+            })
+
+        accuracy = sum(r["correct"] for r in results) / len(results)
+        logger.info(f"ARC accuracy: {accuracy:.4f} ({len(results)} questions)")
+
+        summary = {
+            "benchmark": "arc",
+            "accuracy": accuracy,
+            "num_questions": len(results),
+        }
+        self._save_results(xlsx_rows, "arc", self.XLSX_COLUMNS, summary)
+
+        return {**summary, "per_example": results}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ProntoQA
+# ──────────────────────────────────────────────────────────────────────────────
+
+class ProntoQAEvaluator(BenchmarkEvaluator):
+    """ProntoQA: Propositional Logic QA.
+
+    Metrics: Accuracy (exact match on True/False)
+    Format: Determine if a conclusion follows from given premises.
+    """
+
+    SYSTEM_PROMPT = (
+        "You are a logical reasoning expert. Determine if the conclusion "
+        "follows from the given premises. Answer with True or False."
+    )
+
+    XLSX_COLUMNS = [
+        "idx", "question", "ground_truth", "generated", "correct",
+    ]
+
+    def evaluate(self) -> dict[str, Any]:
+        from datasets import load_dataset
+
+        try:
+            dataset = load_dataset("renma/ProntoQA", split="test")
+        except Exception:
+            dataset = load_dataset("renma/ProntoQA", split="train")
+
+        items = list(dataset)
+        if self.num_samples:
+            items = items[:self.num_samples]
+
+        results = []
+        xlsx_rows = []
+
+        for idx, item in enumerate(tqdm(items, desc="ProntoQA")):
+            question = item.get("question", item.get("context", ""))
+            answer = item.get("answer", item.get("label", ""))
+
+            prompt = (
+                f"{question}\n\n"
+                f"Based on the above, is the conclusion true or false? Answer:"
+            )
+            generated_raw, trajectory = self._generate(prompt, self.SYSTEM_PROMPT)
+            generated = generated_raw.strip()
+
+            is_correct = exact_match(generated, str(answer))
+
+            sample: dict[str, Any] = {
+                "idx": idx,
+                "correct": is_correct,
+            }
+            if self.save_qa:
+                sample["prompt"] = prompt
+                sample["generated"] = generated
+                sample["raw_output"] = generated_raw
+            if self.save_ground_truth:
+                sample["ground_truth"] = str(answer)
+            if self.record_trajectory:
+                sample["trajectory"] = trajectory
+
+            results.append(sample)
+
+            xlsx_rows.append({
+                "idx": str(idx),
+                "question": question,
+                "ground_truth": str(answer),
+                "generated": generated,
+                "correct": str(bool(is_correct)),
+            })
+
+        accuracy = sum(r["correct"] for r in results) / len(results)
+        logger.info(f"ProntoQA accuracy: {accuracy:.4f} ({len(results)} examples)")
+
+        summary = {
+            "benchmark": "prontoqa",
+            "accuracy": accuracy,
+            "num_examples": len(results),
+        }
+        self._save_results(xlsx_rows, "prontoqa", self.XLSX_COLUMNS, summary)
+
+        return {**summary, "per_example": results}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# GPQA
+# ──────────────────────────────────────────────────────────────────────────────
+
+class GPQAEvaluator(BenchmarkEvaluator):
+    """GPQA: Graduate-level Google-Proof QA (Diamond subset).
+
+    Metrics: Accuracy
+    Format: Multiple choice (A/B/C/D), PhD-level science questions.
+    """
+
+    SYSTEM_PROMPT = (
+        "Answer the following graduate-level science question. "
+        "Think carefully, then respond with just the letter (A, B, C, or D)."
+    )
+
+    XLSX_COLUMNS = [
+        "idx", "question", "choices",
+        "ground_truth", "predicted", "correct",
+    ]
+
+    def evaluate(self) -> dict[str, Any]:
+        from datasets import load_dataset
+
+        # GPQA Diamond is the hardest, expert-validated subset
+        dataset = load_dataset("Idavidrein/gpqa", "gpqa_diamond", split="train")
+        items = list(dataset)
+        if self.num_samples:
+            items = items[:self.num_samples]
+
+        results = []
+        xlsx_rows = []
+
+        for idx, item in enumerate(tqdm(items, desc="GPQA")):
+            question = item["Question"]
+            correct_answer = item["Correct Answer"]
+            choices = [
+                item["Correct Answer"],
+                item["Incorrect Answer 1"],
+                item["Incorrect Answer 2"],
+                item["Incorrect Answer 3"],
+            ]
+            # Deterministic shuffle based on question hash to keep reproducible
+            import hashlib
+            seed = int(hashlib.md5(question.encode()).hexdigest()[:8], 16)
+            rng = __import__("random").Random(seed)
+            rng.shuffle(choices)
+            answer_key = "ABCD"[choices.index(correct_answer)]
+
+            prompt = f"Question: {question}\n"
+            choices_str = ""
+            for letter, choice in zip("ABCD", choices):
+                prompt += f"{letter}. {choice}\n"
+                choices_str += f"{letter}. {choice[:60]}; "
+            prompt += "Answer:"
+
+            generated_raw, trajectory = self._generate(prompt, self.SYSTEM_PROMPT)
+            pred = extract_multiple_choice(generated_raw)
+            is_correct = pred == answer_key
+
+            sample: dict[str, Any] = {
+                "idx": idx,
+                "ground_truth": answer_key,
+                "predicted": pred,
+                "correct": is_correct,
+            }
+            if self.save_qa:
+                sample["prompt"] = prompt
+                sample["raw_output"] = generated_raw
+            if self.save_ground_truth:
+                sample["choices"] = {l: c for l, c in zip("ABCD", choices)}
+                sample["correct_answer_text"] = correct_answer
+            if self.record_trajectory:
+                sample["trajectory"] = trajectory
+
+            results.append(sample)
+
+            xlsx_rows.append({
+                "idx": str(idx),
+                "question": question[:200],
+                "choices": choices_str.rstrip("; "),
+                "ground_truth": answer_key,
+                "predicted": pred or "",
+                "correct": str(is_correct),
+            })
+
+        accuracy = sum(r["correct"] for r in results) / max(len(results), 1)
+        logger.info(f"GPQA accuracy: {accuracy:.4f} ({len(results)} questions)")
+
+        summary = {
+            "benchmark": "gpqa",
+            "accuracy": accuracy,
+            "num_questions": len(results),
+        }
+        self._save_results(xlsx_rows, "gpqa", self.XLSX_COLUMNS, summary)
+
+        return {**summary, "per_example": results}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# AIME (AMC/AIME Competition Math)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class AIMEEvaluator(BenchmarkEvaluator):
+    """AIME: American Invitational Mathematics Examination problems.
+
+    Metrics: Accuracy (exact match on integer answer 000-999)
+    Format: Competition math; answer is always an integer 0-999.
+    """
+
+    SYSTEM_PROMPT = (
+        "You are a math competition expert. Solve the problem step by step. "
+        "The answer is an integer between 000 and 999. "
+        "Give your final answer as a 3-digit number after ####."
+    )
+
+    XLSX_COLUMNS = [
+        "idx", "problem", "ground_truth", "extracted_answer", "correct",
+    ]
+
+    def evaluate(self) -> dict[str, Any]:
+        from datasets import load_dataset
+
+        # Use AI-MO/aimo-validation-aime which has AIME problems
+        try:
+            dataset = load_dataset("AI-MO/aimo-validation-aime", split="train")
+        except Exception:
+            # Fallback: use the broader competition math set
+            try:
+                dataset = load_dataset("Maxwell-Jia/AIME_2024", split="train")
+            except Exception:
+                logger.warning("Could not load AIME dataset — trying contest_math")
+                dataset = load_dataset("hendrycks/competition_math", split="test")
+
+        items = list(dataset)
+        if self.num_samples:
+            items = items[:self.num_samples]
+
+        results = []
+        xlsx_rows = []
+
+        for idx, item in enumerate(tqdm(items, desc="AIME")):
+            # Handle different dataset schemas
+            problem = item.get("problem", item.get("question", ""))
+            answer = str(item.get("answer", item.get("solution", "")))
+
+            # For AIME, extract just the integer answer
+            gt_number = self._extract_aime_answer(answer)
+
+            prompt = (
+                f"Solve the following competition math problem.\n\n"
+                f"Problem: {problem}\n\n"
+                f"Solution (give final integer answer after ####):"
+            )
+            generated_raw, trajectory = self._generate(prompt, self.SYSTEM_PROMPT)
+            pred_number = extract_number(generated_raw) or ""
+
+            is_correct = exact_match(str(pred_number), str(gt_number))
+
+            sample: dict[str, Any] = {
+                "idx": idx,
+                "correct": is_correct,
+            }
+            if self.save_qa:
+                sample["prompt"] = prompt
+                sample["generated"] = generated_raw
+                sample["extracted_answer"] = pred_number
+            if self.save_ground_truth:
+                sample["ground_truth"] = gt_number
+                sample["full_solution"] = answer
+            if self.record_trajectory:
+                sample["trajectory"] = trajectory
+
+            results.append(sample)
+
+            xlsx_rows.append({
+                "idx": str(idx),
+                "problem": problem[:300],
+                "ground_truth": str(gt_number),
+                "extracted_answer": str(pred_number),
+                "correct": str(bool(is_correct)),
+            })
+
+        accuracy = sum(r["correct"] for r in results) / max(len(results), 1)
+        logger.info(f"AIME accuracy: {accuracy:.4f} ({len(results)} problems)")
+
+        summary = {
+            "benchmark": "aime",
+            "accuracy": accuracy,
+            "num_problems": len(results),
+        }
+        self._save_results(xlsx_rows, "aime", self.XLSX_COLUMNS, summary)
+
+        return {**summary, "per_example": results}
+
+    @staticmethod
+    def _extract_aime_answer(text: str) -> str:
+        """Extract integer answer from AIME solution."""
+        # Try #### pattern first
+        if "####" in text:
+            return text.split("####")[-1].strip().replace(",", "")
+        # Try \boxed{}
+        idx = text.rfind("\\boxed{")
+        if idx != -1:
+            start = idx + len("\\boxed{")
+            depth = 1
+            i = start
+            while i < len(text) and depth > 0:
+                if text[i] == "{":
+                    depth += 1
+                elif text[i] == "}":
+                    depth -= 1
+                i += 1
+            if depth == 0:
+                return text[start:i - 1].strip()
+        # Fallback: last number in text
+        numbers = re.findall(r"(-?\d+)", text)
+        return numbers[-1] if numbers else text.strip()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Registry
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -800,4 +1391,10 @@ BENCHMARK_REGISTRY = {
     "humaneval": HumanEvalEvaluator,
     "hotpotqa": HotpotQAEvaluator,
     "mmlu": MMLUEvaluator,
+    "gsm8k": GSM8KEvaluator,
+    "math": MATHEvaluator,
+    "arc": ARCEvaluator,
+    "prontoqa": ProntoQAEvaluator,
+    "gpqa": GPQAEvaluator,
+    "aime": AIMEEvaluator,
 }

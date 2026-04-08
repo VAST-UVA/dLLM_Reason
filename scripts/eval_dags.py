@@ -2,8 +2,8 @@
 
 Usage:
     python scripts/eval_dags.py \
-        --benchmarks mbpp humaneval hotpotqa mmlu \
-        --dags random linear cot skeleton bidirectional \
+        --benchmarks mbpp humaneval hotpotqa mmlu gsm8k math arc prontoqa \
+        --dags confidence random entropy semi_ar linear cot skeleton bidirectional answer_first \
         --model_id GSAI-ML/LLaDA-8B-Instruct \
         --output_dir results/ \
         --num_steps 128 \
@@ -70,14 +70,19 @@ def parse_args():
     # Benchmarks
     parser.add_argument("--benchmarks", nargs="+",
                         default=D("benchmarks", ["mbpp", "humaneval"]),
-                        choices=["mbpp", "humaneval", "hotpotqa", "mmlu"])
+                        choices=["mbpp", "humaneval", "hotpotqa", "mmlu",
+                                 "gsm8k", "math", "arc", "prontoqa",
+                                 "gpqa", "aime"])
     parser.add_argument("--num_samples", type=int, default=D("num_samples", None))
 
     # DAG strategies
     parser.add_argument("--dags", nargs="+",
                         default=D("dags", ["confidence"]),
                         choices=["random", "linear", "cot", "bidirectional",
-                                 "confidence", "skeleton", "answer_first"])
+                                 "confidence", "skeleton", "answer_first",
+                                 "entropy", "semi_ar",
+                                 "maskgit_cosine", "critical_token_first", "curriculum",
+                                 "adaptive_dynamic"])
 
     # Inference params
     parser.add_argument("--num_steps",    type=int,   default=D("num_steps", 128))
@@ -139,6 +144,11 @@ def build_dag_scheduler(dag_name: str, seq_len: int, args, device: torch.device)
     from dllm_reason.scheduler.confidence_scheduler import ConfidenceScheduler
     from dllm_reason.scheduler.random_scheduler import RandomScheduler
     from dllm_reason.scheduler.linear_scheduler import LinearScheduler
+    from dllm_reason.scheduler.entropy_scheduler import EntropyScheduler
+    from dllm_reason.scheduler.semi_ar_scheduler import SemiAutoregressiveScheduler
+    from dllm_reason.scheduler.maskgit_scheduler import MaskGITCosineScheduler
+    from dllm_reason.scheduler.critical_token_scheduler import CriticalTokenFirstScheduler
+    from dllm_reason.scheduler.curriculum_scheduler import CurriculumScheduler
 
     if dag_name == "random":
         # No DAG constraints — pure random unmasking
@@ -147,6 +157,32 @@ def build_dag_scheduler(dag_name: str, seq_len: int, args, device: torch.device)
     elif dag_name == "confidence":
         # No DAG constraints — confidence-based (LLaDA default)
         return ConfidenceScheduler(), None
+
+    elif dag_name == "entropy":
+        # No DAG constraints — lowest-entropy (most certain) first
+        return EntropyScheduler(), None
+
+    elif dag_name == "semi_ar":
+        # Semi-autoregressive: block-by-block left-to-right, confidence within block
+        return SemiAutoregressiveScheduler(block_size=args.block_length), None
+
+    elif dag_name == "maskgit_cosine":
+        # MaskGIT cosine schedule: more tokens early, fewer later
+        return MaskGITCosineScheduler(), None
+
+    elif dag_name == "critical_token_first":
+        # Unmask most influential (highest KL from uniform) positions first
+        return CriticalTokenFirstScheduler(), None
+
+    elif dag_name == "curriculum":
+        # Easy (high confidence + low entropy) tokens first, hard tokens last
+        return CurriculumScheduler(), None
+
+    elif dag_name == "adaptive_dynamic":
+        # Dynamic DAG: constructs soft dependencies at runtime based on
+        # pairwise influence between masked positions
+        from dllm_reason.scheduler.adaptive_dynamic_scheduler import AdaptiveDynamicScheduler
+        return AdaptiveDynamicScheduler(), None
 
     elif dag_name == "linear":
         # Left-to-right chain (no DAG object needed, scheduler handles order)
@@ -345,16 +381,17 @@ def _get_primary_metric(result: dict) -> dict:
         return {"name": "N/A", "value": 0.0}
 
     bm = result.get("benchmark", "")
-    if bm == "mbpp":
+    # Code benchmarks → pass@1
+    if bm in ("mbpp", "humaneval"):
         return {"name": "pass@1", "value": result.get("pass@1", 0.0)}
-    elif bm == "humaneval":
-        return {"name": "pass@1", "value": result.get("pass@1", 0.0)}
+    # QA benchmark → EM
     elif bm == "hotpotqa":
         return {"name": "EM", "value": result.get("exact_match", 0.0)}
-    elif bm == "mmlu":
+    # MCQ / reasoning / math benchmarks → accuracy
+    elif bm in ("mmlu", "gsm8k", "math", "arc", "prontoqa", "gpqa", "aime"):
         return {"name": "accuracy", "value": result.get("accuracy", 0.0)}
     else:
-        # Try common keys
+        # Fallback: try common keys
         for key in ["pass@1", "accuracy", "exact_match", "f1"]:
             if key in result:
                 return {"name": key, "value": result[key]}

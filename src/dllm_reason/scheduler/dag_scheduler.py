@@ -41,6 +41,11 @@ class DAGScheduler(UnmaskingScheduler):
     ):
         self.dag = dag
         self.sub_strategy = sub_strategy
+        self._prompt_len: int | None = None  # auto-detected on first call
+
+    def reset(self):
+        """Reset internal state."""
+        self._prompt_len = None
 
     def select_positions(
         self,
@@ -55,9 +60,28 @@ class DAGScheduler(UnmaskingScheduler):
     ) -> torch.Tensor:
         B, L = current_mask.shape
         device = current_mask.device
+        dag_len = self.dag.seq_len
 
-        # 1. Get positions whose all DAG parents are unmasked
-        ready = self.dag.ready_positions(is_unmasked)  # (B, L)
+        # ── Dimension alignment ──────────────────────────────────────────
+        # The DAG covers only the generation area (dag_len positions),
+        # but current_mask / is_unmasked cover the full sequence
+        # (prompt_len + gen_len).  We slice out the generation part,
+        # query the DAG, then pad back.
+        if L > dag_len:
+            # Auto-detect prompt length on first call
+            if self._prompt_len is None:
+                self._prompt_len = L - dag_len
+
+            pl = self._prompt_len
+            gen_unmasked = is_unmasked[:, pl:pl + dag_len]  # (B, dag_len)
+            ready_gen = self.dag.ready_positions(gen_unmasked)  # (B, dag_len)
+
+            # Pad to full sequence: prompt positions are always "ready"
+            ready = torch.ones(B, L, dtype=torch.bool, device=device)
+            ready[:, pl:pl + dag_len] = ready_gen
+        else:
+            # Sequence matches DAG size exactly
+            ready = self.dag.ready_positions(is_unmasked)  # (B, L)
 
         # 2. Eligible = ready AND still masked
         eligible = ready & current_mask  # (B, L)
@@ -141,6 +165,10 @@ class AdaptiveDAGScheduler(UnmaskingScheduler):
         self.dag = dag
         self.confidence_threshold = confidence_threshold
         self.bypass_fraction = bypass_fraction
+        self._prompt_len: int | None = None
+
+    def reset(self):
+        self._prompt_len = None
 
     def select_positions(
         self,
@@ -155,8 +183,20 @@ class AdaptiveDAGScheduler(UnmaskingScheduler):
     ) -> torch.Tensor:
         B, L = current_mask.shape
         device = current_mask.device
+        dag_len = self.dag.seq_len
 
-        ready = self.dag.ready_positions(is_unmasked)
+        # Dimension alignment (same logic as DAGScheduler)
+        if L > dag_len:
+            if self._prompt_len is None:
+                self._prompt_len = L - dag_len
+            pl = self._prompt_len
+            gen_unmasked = is_unmasked[:, pl:pl + dag_len]
+            ready_gen = self.dag.ready_positions(gen_unmasked)
+            ready = torch.ones(B, L, dtype=torch.bool, device=device)
+            ready[:, pl:pl + dag_len] = ready_gen
+        else:
+            ready = self.dag.ready_positions(is_unmasked)
+
         eligible = ready & current_mask
 
         result = torch.zeros(B, L, dtype=torch.bool, device=device)

@@ -117,15 +117,45 @@ class DiffusionSampler:
         cfg = self.config
         device = device or next(self.model.parameters()).device
 
-        assert gen_length % cfg.block_length == 0, (
-            f"gen_length ({gen_length}) must be divisible by "
-            f"block_length ({cfg.block_length})"
-        )
+        # ── Auto-pad gen_length to be divisible by block_length ────────
+        original_gen_length = gen_length
+        if gen_length % cfg.block_length != 0:
+            gen_length = ((gen_length // cfg.block_length) + 1) * cfg.block_length
+            logger.debug(
+                f"Auto-padded gen_length {original_gen_length} → {gen_length} "
+                f"(divisible by block_length={cfg.block_length})"
+            )
+            # Extend prompt_ids with extra mask tokens
+            extra = gen_length - original_gen_length
+            extra_masks = torch.full(
+                (prompt_ids.shape[0], extra), self.model.mask_token_id,
+                dtype=prompt_ids.dtype, device=prompt_ids.device,
+            )
+            prompt_ids = torch.cat([prompt_ids, extra_masks], dim=1)
+            extra_pm = torch.zeros(
+                prompt_mask.shape[0], extra, dtype=torch.bool, device=prompt_mask.device,
+            )
+            prompt_mask = torch.cat([prompt_mask, extra_pm], dim=1)
+
         num_blocks = gen_length // cfg.block_length
-        assert cfg.num_steps % num_blocks == 0, (
-            f"num_steps ({cfg.num_steps}) must be divisible by "
-            f"num_blocks ({num_blocks})"
-        )
+
+        # ── Auto-adjust num_steps to be divisible by num_blocks ──────
+        if cfg.num_steps % num_blocks != 0:
+            adjusted = ((cfg.num_steps // num_blocks) + 1) * num_blocks
+            logger.debug(
+                f"Auto-adjusted num_steps {cfg.num_steps} → {adjusted} "
+                f"(divisible by num_blocks={num_blocks})"
+            )
+            cfg = SamplingConfig(
+                num_steps=adjusted,
+                block_length=cfg.block_length,
+                temperature=cfg.temperature,
+                cfg_scale=cfg.cfg_scale,
+                remasking=cfg.remasking,
+                show_progress=cfg.show_progress,
+                record_trajectory=cfg.record_trajectory,
+                debug=cfg.debug,
+            )
         steps_per_block = cfg.num_steps // num_blocks
 
         x = prompt_ids.clone().to(device)
@@ -162,6 +192,11 @@ class DiffusionSampler:
             )  # (B, steps_per_block)
 
             for step in range(steps_per_block):
+                # ── Early-stop: skip if no masked tokens remain in block ─
+                block_remaining = (x[:, b_start:b_end] == mask_id).sum()
+                if block_remaining == 0:
+                    break
+
                 # ── Forward pass ──────────────────────────────────────────
                 if cfg.cfg_scale > 0:
                     un_x = x.clone()
@@ -227,5 +262,11 @@ class DiffusionSampler:
             logits = self.model.forward(x).logits
             logits[..., mask_id] = -float("inf")
             x = torch.where(remaining_mask, logits.argmax(dim=-1), x)
+
+        # Trim auto-padded tokens so the output matches original gen_length
+        if gen_length != original_gen_length:
+            total_keep = prompt_len + original_gen_length
+            x = x[:, :total_keep]
+            trajectory = [t[:, :total_keep] for t in trajectory]
 
         return SamplingResult(sequences=x, trajectory=trajectory)

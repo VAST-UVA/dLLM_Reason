@@ -1,0 +1,53 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "train-mdlm",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["scripts/train.py", "--model", "mdlm", "--dataset", "gsm8k", "--mode", "pretrain", "--output_dir", "checkpoints/mdlm_gsm8k"],
+      "port": 0
+    },
+    {
+      "name": "eval-dags",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["scripts/eval_dags.py", "--benchmarks", "mbpp", "humaneval", "gsm8k", "math", "--dags", "confidence", "random", "entropy", "semi_ar", "cot", "skeleton", "bidirectional", "answer_first", "adaptive_dynamic", "--num_steps", "128", "--num_samples", "100", "--output_dir", "results/"],
+      "port": 0
+    },
+    {
+      "name": "eval-full",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["scripts/eval_dags.py", "--benchmarks", "mbpp", "humaneval", "gsm8k", "math", "arc", "mmlu", "hotpotqa", "prontoqa", "gpqa", "aime", "--dags", "confidence", "random", "entropy", "semi_ar", "maskgit_cosine", "critical_token_first", "curriculum", "linear", "cot", "skeleton", "bidirectional", "answer_first", "adaptive_dynamic", "--num_steps", "128", "--save_outputs", "--output_dir", "results/full"],
+      "port": 0
+    },
+    {
+      "name": "evaluate",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["scripts/evaluate.py", "--model", "mdlm", "--dataset", "gsm8k", "--schedulers", "random", "confidence", "linear", "cot", "skeleton", "--output_dir", "results/mdlm_gsm8k"],
+      "port": 0
+    },
+    {
+      "name": "search-dag",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["scripts/search_dag.py", "--method", "evolutionary", "--population_size", "20", "--budget", "200", "--output_dir", "results/dag_search"],
+      "port": 0
+    },
+    {
+      "name": "visualize-dag",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["scripts/visualize_dag.py", "--mode", "templates", "--seq_len", "32", "--output_dir", "figures/dags"],
+      "port": 0
+    },
+    {
+      "name": "serve",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["scripts/serve.py", "--model_id", "checkpoints/llada-instruct", "--port", "8000"],
+      "port": 8000
+    },
+    {
+      "name": "serve-4bit",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["scripts/serve.py", "--model_id", "checkpoints/llada-instruct", "--port", "8000", "--quantize", "4bit"],
+      "port": 8000
+    }
+  ]
+}

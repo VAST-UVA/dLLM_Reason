@@ -45,6 +45,7 @@ class LLaDAWrapper(DiffusionLM):
         torch_dtype: torch.dtype = torch.bfloat16,
         device_map: str = "auto",
         trust_remote_code: bool = True,
+        quantization_config=None,
     ):
         # Load tokenizer first to get vocab info
         logger.info(f"Loading tokenizer from {model_id}")
@@ -67,13 +68,17 @@ class LLaDAWrapper(DiffusionLM):
         self.model_id = model_id
 
         # Load the pretrained model
-        logger.info(f"Loading LLaDA model from {model_id} ...")
-        self._llada = AutoModel.from_pretrained(
-            model_id,
+        load_kwargs = dict(
             torch_dtype=torch_dtype,
             device_map=device_map,
             trust_remote_code=trust_remote_code,
         )
+        if quantization_config is not None:
+            load_kwargs["quantization_config"] = quantization_config
+            logger.info(f"Loading LLaDA model from {model_id} with quantization ...")
+        else:
+            logger.info(f"Loading LLaDA model from {model_id} ...")
+        self._llada = AutoModel.from_pretrained(model_id, **load_kwargs)
         logger.info("LLaDA model loaded.")
 
         # ── Resolve mask_token_id from model.config (most reliable source) ──
