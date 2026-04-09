@@ -1,15 +1,20 @@
-"""Learn from stored episodes: SFT or GRPO on the EpisodeStore.
+"""Learn from stored episodes: SFT, GRPO, or DiFFPO on the EpisodeStore.
 
-Two learning modes
-------------------
-sft   — Supervised fine-tuning on *correct* episodes.
-        (prompt, correct_output) pairs via standard cross-entropy loss.
+Three learning modes
+--------------------
+sft     — Supervised fine-tuning on *correct* episodes.
+          (prompt, correct_output) pairs via standard cross-entropy loss.
 
-grpo  — Group Relative Policy Optimization (DiffuGRPO).
-        Reward = +1 for correct, -1 for wrong. Groups are built by
-        clustering all episodes with the same prompt.
+grpo    — Group Relative Policy Optimization (DiffuGRPO).
+          Reward = +1 for correct, -1 for wrong. Groups are built by
+          clustering all episodes with the same prompt.
 
-Both modes support DAG-aware training when episodes contain a DAG.
+diffppo — Diffusion Fast and Furious Policy Optimization.
+          PPO-style RL with importance-ratio clipping + joint sampler
+          training (adaptive step budget per prompt).
+          Reference: Zhao et al. 2024 https://arxiv.org/abs/2510.02212
+
+All modes support DAG-aware training when episodes contain a DAG.
 
 Usage
 -----
@@ -28,6 +33,16 @@ python scripts/learn_from_episodes.py \\
     --mode grpo \\
     --dag_aware \\
     --output_dir checkpoints/llada-grpo-math
+
+# DiFFPO with joint sampler training
+python scripts/learn_from_episodes.py \\
+    --db_path episodes/gsm8k.db \\
+    --model_id checkpoints/llada-instruct \\
+    --mode diffppo \\
+    --ppo_clip_eps 0.2 \\
+    --train_sampler \\
+    --min_steps 8 --max_steps 128 \\
+    --output_dir checkpoints/llada-diffppo-math
 
 # Dry-run: print dataset stats then exit
 python scripts/learn_from_episodes.py \\
@@ -373,6 +388,64 @@ def run_grpo(
     _save_model(model, tokenizer, args.output_dir)
 
 
+# ── DiFFPO training loop ──────────────────────────────────────────────────────
+
+def run_diffppo(
+    model,
+    ref_model,
+    tokenizer,
+    episodes: list[DAGEpisode],
+    args: argparse.Namespace,
+) -> None:
+    """DiFFPO fine-tuning: PPO with importance-ratio clipping + joint sampler.
+
+    Reference: Zhao et al. 2024  https://arxiv.org/abs/2510.02212
+    """
+    from torch.utils.data import DataLoader
+    from dllm_reason.training.rl_train import DiFFPO, DiFFPOConfig
+    from dllm_reason.scheduler.confidence_scheduler import ConfidenceScheduler
+
+    dataset = GRPOEpisodeDataset(episodes, tokenizer, max_prompt_length=args.max_length)
+    loader  = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=0)
+
+    # Build a reward function that looks up pre-stored episode correctness
+    # (We use the stored reward rather than re-running inference for speed)
+    def reward_fn(seq_ids: torch.Tensor, batch: dict) -> float:
+        # batch["episodes"] contains the episode group; return mean stored reward
+        group: list[DAGEpisode] = batch["episodes"][0]
+        return sum(ep.reward for ep in group) / max(len(group), 1)
+
+    cfg = DiFFPOConfig(
+        lr              = args.lr,
+        num_iterations  = args.epochs * len(loader),
+        group_size      = 1,          # episodes already stored; single pass per group
+        ppo_clip_eps    = args.ppo_clip_eps,
+        kl_coeff        = args.kl_coeff,
+        log_every       = args.log_every,
+        train_sampler   = args.train_sampler,
+        step_budget_lambda = args.step_budget_lambda,
+        min_steps       = args.min_steps,
+        max_steps       = args.max_steps,
+    )
+
+    scheduler = ConfidenceScheduler()
+    trainer = DiFFPO(
+        model       = model,
+        ref_model   = ref_model,
+        scheduler   = scheduler,
+        reward_fn   = reward_fn,
+        train_loader= loader,
+        config      = cfg,
+    )
+
+    print(
+        f"\nRunning DiFFPO for {cfg.num_iterations} iterations "
+        f"(train_sampler={cfg.train_sampler}) ..."
+    )
+    trainer.train()
+    _save_model(model, tokenizer, args.output_dir)
+
+
 # ── DAG helpers for training ──────────────────────────────────────────────────
 
 def _build_aggregate_dag(
@@ -475,21 +548,33 @@ def parse_args() -> argparse.Namespace:
 
     # Training mode
     parser.add_argument("--mode", default="sft",
-                        choices=["sft", "grpo", "stats"],
-                        help="sft: supervised, grpo: RL, stats: data info only")
+                        choices=["sft", "grpo", "diffppo", "stats"],
+                        help="sft: supervised, grpo: GRPO RL, diffppo: DiFFPO RL, stats: info only")
     parser.add_argument("--dag_aware", action="store_true",
                         help="Use DAG-biased masking during training")
 
-    # Hyperparameters
+    # Hyperparameters (shared)
     parser.add_argument("--epochs",     type=int,   default=3)
     parser.add_argument("--batch_size", type=int,   default=4)
     parser.add_argument("--lr",         type=float, default=1e-5)
     parser.add_argument("--max_length", type=int,   default=512)
     parser.add_argument("--log_every",  type=int,   default=20)
     parser.add_argument("--kl_coeff",   type=float, default=0.01,
-                        help="KL penalty for GRPO")
+                        help="KL penalty (GRPO / DiFFPO)")
     parser.add_argument("--clip_ratio", type=float, default=0.2,
-                        help="PPO clip ratio for GRPO")
+                        help="PPO clip ratio (GRPO)")
+
+    # DiFFPO-specific
+    parser.add_argument("--ppo_clip_eps", type=float, default=0.2,
+                        help="ε for DiFFPO importance-ratio clipping")
+    parser.add_argument("--train_sampler", action="store_true",
+                        help="DiFFPO: jointly train the step-budget controller")
+    parser.add_argument("--min_steps", type=int, default=8,
+                        help="DiFFPO: minimum denoising steps for controller")
+    parser.add_argument("--max_steps", type=int, default=128,
+                        help="DiFFPO: maximum denoising steps for controller")
+    parser.add_argument("--step_budget_lambda", type=float, default=0.1,
+                        help="DiFFPO: weight of step-efficiency loss")
 
     # Output
     parser.add_argument("--output_dir", default="checkpoints/finetuned",
@@ -569,6 +654,16 @@ def main():
         ref_model.eval()
 
         run_grpo(model, ref_model, tokenizer, episodes, args)
+
+    elif args.mode == "diffppo":
+        print(f"\nRunning DiFFPO (Zhao et al. 2024) ...")
+        print("Loading frozen reference model ...")
+        ref_model, _ = load_model(args)
+        for p in ref_model.parameters():
+            p.requires_grad = False
+        ref_model.eval()
+
+        run_diffppo(model, ref_model, tokenizer, episodes, args)
 
 
 if __name__ == "__main__":
