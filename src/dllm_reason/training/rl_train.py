@@ -1,6 +1,6 @@
 """RL-based training for dLLMs.
 
-Two RL algorithms are implemented here:
+Three RL algorithms are implemented here:
 
 DiffuGRPO
 ---------
@@ -37,6 +37,30 @@ PPO-style RL for dLLMs with two key innovations over GRPO:
 Reference: DiFFPO — Training Diffusion LLMs to Reason Fast and Furious
 via Reinforcement Learning.  Zhao et al., 2024.
 https://arxiv.org/abs/2510.02212
+
+UnmaskingPolicyRL
+-----------------
+Learns *how to unmask* (process-level RL) rather than *what to generate*
+(sequence-level RL).  The masked diffusion sampling loop is framed as a
+Markov Decision Process:
+
+  State:  per-token confidence scores from the frozen dLLM at each step
+  Action: binary vector — which masked positions to reveal this step
+  Reward: task reward on the fully decoded sequence
+
+A lightweight single-layer transformer policy maps the confidence-score
+sequence to per-token Bernoulli unmasking logits.  Only the policy
+network is trained (LM weights are frozen); optimisation is plain
+REINFORCE with a group-mean baseline (control variate).
+
+This is orthogonal to DiffuGRPO/DiFFPO: those methods update LM weights
+to improve generation quality; this method learns a better unmasking
+schedule without touching the LM.
+
+Reference: Jazbec, Olausson, Béthune, Ablin, Kirchhof, Monteiro,
+Turrisi, Ramapuram, Cuturi. "Learning Unmasking Policies for
+Diffusion Language Models." 2025.
+https://arxiv.org/abs/2512.09106
 """
 
 from __future__ import annotations
@@ -498,3 +522,299 @@ class DiFFPO:
         token_lp = log_probs.gather(-1, sequences.unsqueeze(-1)).squeeze(-1)
         gen_mask = ~prompt_mask
         return (token_lp * gen_mask.float()).sum(dim=-1)
+
+
+# ── UnmaskingPolicyRL ─────────────────────────────────────────────────────────
+
+@dataclass
+class UnmaskingPolicyConfig:
+    """Configuration for the RL-trained unmasking policy.
+
+    Reference: Jazbec et al. 2025 — https://arxiv.org/abs/2512.09106
+    """
+    # Optimisation
+    lr: float = 3e-4
+    num_iterations: int = 1000
+    group_size: int = 4            # REINFORCE rollouts per prompt
+    max_grad_norm: float = 1.0
+    log_every: int = 10
+
+    # Rollout
+    num_steps: int = 32            # diffusion denoising steps per rollout
+    temperature: float = 0.0       # unused — policy controls unmasking
+
+    # Policy network architecture
+    policy_d_model: int = 64       # transformer d_model
+    policy_n_heads: int = 4        # attention heads
+    policy_dropout: float = 0.0
+
+
+class UnmaskingPolicyNet(torch.nn.Module):
+    """Single-layer transformer policy for token unmasking decisions.
+
+    Maps per-token confidence scores (from the frozen dLLM) to per-token
+    Bernoulli logits that decide which masked positions to reveal at each
+    diffusion step.
+
+    Architecture
+    ------------
+    Linear(1 → d_model) → TransformerEncoderLayer → Linear(d_model → 1)
+
+    Input:  (B, L) per-token max-softmax confidence from the dLLM.
+    Output: (B, L) unnormalised logits for Bernoulli(unmask).
+
+    Reference: Jazbec et al. 2025 (arXiv:2512.09106)
+    """
+
+    def __init__(
+        self,
+        d_model: int = 64,
+        n_heads: int = 4,
+        dropout: float = 0.0,
+    ):
+        super().__init__()
+        self.input_proj = torch.nn.Linear(1, d_model)
+        self.transformer = torch.nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=n_heads,
+            dim_feedforward=d_model * 2,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.output_head = torch.nn.Linear(d_model, 1)
+
+    def forward(self, confidence: torch.Tensor) -> torch.Tensor:
+        """Compute per-token unmasking logits.
+
+        Args:
+            confidence: (B, L) float tensor of per-token confidence scores.
+
+        Returns:
+            (B, L) Bernoulli logits (positive → likely to unmask).
+        """
+        x = self.input_proj(confidence.unsqueeze(-1))  # (B, L, d_model)
+        x = self.transformer(x)                        # (B, L, d_model)
+        return self.output_head(x).squeeze(-1)         # (B, L)
+
+
+class UnmaskingPolicyRL:
+    """RL-trained unmasking policy for dLLMs.
+
+    Frames the masked diffusion sampling loop as a Markov Decision Process
+    and trains a lightweight transformer policy via REINFORCE with a
+    group-mean baseline (control variate).
+
+    Key distinction from DiffuGRPO / DiFFPO
+    ----------------------------------------
+    * DiffuGRPO / DiFFPO: update **LM weights** to generate better outputs
+      (sequence-level RL).
+    * UnmaskingPolicyRL:  train a **separate policy network**; LM weights
+      are frozen.  The policy learns a better unmasking *schedule* for any
+      fixed LM (process-level RL).
+
+    MDP formulation
+    ---------------
+    * State  s_t : per-token max-softmax confidence from the frozen dLLM
+    * Action a_t : binary mask (unmask / keep-masked) per position
+    * Reward R   : task reward evaluated on the fully decoded sequence
+
+    Training
+    --------
+    REINFORCE loss:
+        L = -E[ (R - baseline) · Σ_t log π(a_t | s_t) ]
+    where baseline = mean reward across the rollout group (control variate).
+
+    Reference
+    ---------
+    Jazbec, Olausson, Béthune, Ablin, Kirchhof, Monteiro, Turrisi,
+    Ramapuram, Cuturi. "Learning Unmasking Policies for Diffusion Language
+    Models." 2025. https://arxiv.org/abs/2512.09106
+    """
+
+    def __init__(
+        self,
+        model: DiffusionLM,
+        reward_fn: Callable[[torch.Tensor, dict], float],
+        train_loader: DataLoader,
+        config: UnmaskingPolicyConfig | None = None,
+    ):
+        self.model = model
+        self.reward_fn = reward_fn
+        self.train_loader = train_loader
+        self.config = config or UnmaskingPolicyConfig()
+
+        cfg = self.config
+        device = model.device
+
+        # Policy network (trained)
+        self.policy = UnmaskingPolicyNet(
+            d_model=cfg.policy_d_model,
+            n_heads=cfg.policy_n_heads,
+            dropout=cfg.policy_dropout,
+        ).to(device)
+        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=cfg.lr)
+
+        # Freeze the language model
+        for p in self.model.parameters():
+            p.requires_grad = False
+        self.model.eval()
+
+        n_policy = sum(p.numel() for p in self.policy.parameters())
+        logger.info(
+            f"UnmaskingPolicyRL ready — policy params={n_policy:,}, LM frozen."
+        )
+
+    # ── Helpers ───────────────────────────────────────────────────────────
+
+    @torch.no_grad()
+    def _confidence(
+        self, x: torch.Tensor, t: torch.Tensor
+    ) -> torch.Tensor:
+        """Per-token max-softmax confidence from the frozen LM."""
+        out = self.model.forward(x, t)
+        return F.softmax(out.logits, dim=-1).max(dim=-1).values  # (B, L)
+
+    def _policy_rollout(
+        self,
+        prompt_ids: torch.Tensor,
+        prompt_mask: torch.Tensor,
+        gen_length: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Run one policy-controlled diffusion rollout.
+
+        At each of ``num_steps`` steps:
+          1. Query frozen LM for per-token confidence scores.
+          2. Feed scores to policy → per-token Bernoulli unmasking logits.
+          3. Sample binary action; decode selected masked positions with
+             the LM argmax.
+          4. Accumulate step log-probabilities for REINFORCE.
+
+        Returns:
+            sequences:    (B, L) final token ids after full rollout.
+            log_prob_sum: (B,)  summed step log-probs for REINFORCE.
+        """
+        cfg = self.config
+        device = prompt_ids.device
+        B, L = prompt_ids.shape
+
+        # Start with generation region fully masked
+        x = prompt_ids.clone()
+        gen_start = int(prompt_mask[0].sum().item())
+        x[:, gen_start:] = self.model.mask_token_id
+
+        # Linearly spaced noise levels 1 → 0
+        ts = torch.linspace(1.0, 0.0, cfg.num_steps + 1, device=device)[:-1]
+
+        log_prob_sum = torch.zeros(B, device=device)
+        self.policy.train()
+
+        for step_i in range(cfg.num_steps):
+            t_vec = ts[step_i].expand(B)
+            is_masked = (x == self.model.mask_token_id)  # (B, L)
+
+            # 1. Confidence scores (zero-out unmasked positions for clarity)
+            with torch.no_grad():
+                conf = self._confidence(x, t_vec)           # (B, L)
+            gen_conf = conf * is_masked.float()
+
+            # 2. Policy → logits; block non-generation positions
+            logits = self.policy(gen_conf)                   # (B, L)
+            logits = logits.masked_fill(~is_masked, -1e9)
+
+            # 3. Sample unmasking action
+            dist   = torch.distributions.Bernoulli(logits=logits)
+            action = dist.sample()                           # (B, L) ∈ {0,1}
+            step_lp = (dist.log_prob(action) * is_masked.float()).sum(-1)  # (B,)
+            log_prob_sum = log_prob_sum + step_lp
+
+            # 4. Decode selected positions with LM argmax
+            unmask_pos = action.bool() & is_masked
+            if unmask_pos.any():
+                with torch.no_grad():
+                    pred_ids = self.model.forward(x, t_vec).logits.argmax(-1)
+                x = torch.where(unmask_pos, pred_ids, x)
+
+        # Force-fill any residual mask tokens
+        with torch.no_grad():
+            still_masked = x == self.model.mask_token_id
+            if still_masked.any():
+                pred_ids = self.model.forward(
+                    x, torch.zeros(B, device=device)
+                ).logits.argmax(-1)
+                x = torch.where(still_masked, pred_ids, x)
+
+        return x, log_prob_sum
+
+    # ── Training loop ─────────────────────────────────────────────────────
+
+    def train(self) -> None:
+        cfg = self.config
+        device = self.model.device
+        data_iter = iter(self.train_loader)
+
+        for iteration in range(cfg.num_iterations):
+            try:
+                batch = next(data_iter)
+            except StopIteration:
+                data_iter = iter(self.train_loader)
+                batch = next(data_iter)
+
+            prompt_ids  = batch["input_ids"].to(device)
+            prompt_mask = batch.get(
+                "prompt_mask",
+                torch.zeros_like(prompt_ids, dtype=torch.bool),
+            ).to(device)
+            B = prompt_ids.shape[0]
+            prompt_len = int(prompt_mask[0].sum().item())
+            gen_length = prompt_ids.shape[1] - prompt_len
+
+            # ── REINFORCE: collect group_size rollouts ────────────────
+            all_rewards:   list[torch.Tensor] = []
+            all_log_probs: list[torch.Tensor] = []
+
+            for _ in range(cfg.group_size):
+                seqs, lp = self._policy_rollout(
+                    prompt_ids, prompt_mask, gen_length
+                )
+                rewards = torch.tensor(
+                    [self.reward_fn(seqs[i], batch) for i in range(B)],
+                    device=device, dtype=torch.float32,
+                )
+                all_rewards.append(rewards)
+                all_log_probs.append(lp)
+
+            rewards_t   = torch.stack(all_rewards)    # (K, B)
+            log_probs_t = torch.stack(all_log_probs)  # (K, B)
+
+            # Group-mean baseline (control variate)
+            baseline   = rewards_t.mean(0, keepdim=True)   # (1, B)
+            advantages = rewards_t - baseline              # (K, B)
+
+            # REINFORCE loss
+            policy_loss = -(advantages.detach() * log_probs_t).mean()
+
+            self.optimizer.zero_grad()
+            policy_loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                self.policy.parameters(), cfg.max_grad_norm
+            )
+            self.optimizer.step()
+
+            if (iteration + 1) % cfg.log_every == 0:
+                mean_r = rewards_t.mean().item()
+                logger.info(
+                    f"Iter {iteration+1}/{cfg.num_iterations}  "
+                    f"reward={mean_r:.4f}  "
+                    f"policy_loss={policy_loss.item():.4f}"
+                )
+
+    def save_policy(self, path: str) -> None:
+        """Save the trained policy network weights."""
+        torch.save(self.policy.state_dict(), path)
+        logger.info(f"Policy saved to {path}")
+
+    def load_policy(self, path: str) -> None:
+        """Load policy network weights from disk."""
+        state = torch.load(path, map_location=self.model.device)
+        self.policy.load_state_dict(state)
+        logger.info(f"Policy loaded from {path}")
