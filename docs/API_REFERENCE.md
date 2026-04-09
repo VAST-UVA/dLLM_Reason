@@ -1,4 +1,4 @@
-# dLLM-Reason API Reference (v1.7.0)
+# dLLM-Reason API Reference (v1.8.0)
 
 ---
 
@@ -94,13 +94,33 @@ sdag.is_valid()
 ### Templates
 
 ```python
+# ── Registry (recommended) ────────────────────────────────────────────────
 from dllm_reason.graph.templates import (
-    chain_of_thought_dag,      # Sequential reasoning steps, parallel within each
-    answer_first_dag,          # Answer tokens first, then reasoning
-    skeleton_then_detail_dag,  # Structure -> content
-    bidirectional_dag,         # Forward + backward passes
-    interleaved_dag,           # Alternating groups
-    random_dag,                # Random edges with given density
+    build_all_templates,  # dict[str, TokenDAG] for every/selected template
+    build_template,       # single TokenDAG by name
+    TEMPLATE_NAMES,       # ['cot','answer_first','skeleton','bidirectional',
+                          #  'interleaved','linear','empty','random_low','random_high']
+)
+
+# All templates for a given seq_len
+templates = build_all_templates(seq_len=128, device="cuda")
+
+# Subset (e.g. to seed a search)
+templates = build_all_templates(128, "cuda", names=["cot", "skeleton", "bidirectional"])
+
+# Single template
+dag = build_template("answer_first", seq_len=256, device="cpu")
+
+# ── Individual constructors (lower-level) ────────────────────────────────
+from dllm_reason.graph.templates import (
+    chain_of_thought_dag,      # "cot"          — sequential reasoning steps
+    answer_first_dag,          # "answer_first" — answer tokens first, then reasoning
+    skeleton_then_detail_dag,  # "skeleton"     — structure then content
+    bidirectional_dag,         # "bidirectional"— outside-in unmasking
+    interleaved_dag,           # "interleaved"  — alternating groups
+    linear_chain_dag,          # "linear"       — strict left-to-right AR
+    empty_dag,                 # "empty"        — no edges (fully parallel)
+    random_dag,                # "random_low/high" — random with given density
 )
 
 dag = chain_of_thought_dag(seq_len=256, num_steps=4, prompt_len=64)
@@ -219,17 +239,29 @@ result: SearchResult = searcher.search(model, eval_fn, seq_len, budget)
 | `DifferentiableSearch` | `search.differentiable` | NOTEARS continuous relaxation with augmented Lagrangian |
 
 ```python
-# With library integration
+# Evolutionary — templates seed the initial population
 from dllm_reason.search.evolutionary import EvolutionarySearch
 
 searcher = EvolutionarySearch(
     population_size=20,
+    init_templates=None,            # None = default set (cot/skeleton/bidirectional/answer_first/empty)
+    # init_templates=["cot","skeleton"]  # explicit subset
+    # init_templates=[]              # disable templates, fill with random only
     library=dag_store,
     library_config=lib_config,
     task_description="Solve grade school math problems",
 )
 result = searcher.search(model, eval_fn, seq_len=256, budget=200)
+# Population initialisation order: explicit initial_dags → library → templates → random
 # Best DAG auto-written back to library
+
+# Greedy — warm-start: evaluates all templates, picks the best one as initial DAG
+from dllm_reason.search.greedy import GreedyEdgeSearch
+
+searcher = GreedyEdgeSearch(
+    init_templates=["cot", "skeleton", "answer_first"],  # costs len(templates) evals
+)
+result = searcher.search(model, eval_fn, seq_len=256, budget=100)
 ```
 
 ### Fitness Functions
@@ -246,9 +278,51 @@ score = accuracy_fitness(model, dag, dataset, num_samples=50)
 | Class | Module | Description |
 |-------|--------|-------------|
 | `Trainer` | `training.pretrain` | Standard pretraining (ELBO/score-entropy/VLB) |
-| `DAGAwareTrainer` | `training.dag_aware_train` | DAG-biased masking during training |
+| `DAGAwareTrainer` | `training.dag_aware_train` | DAG-biased masking during training (level-weighted) |
 | `Finetuner` | `training.finetune` | Answer-only loss fine-tuning |
-| `DiffuGRPO` | `training.rl_train` | Diffu-GRPO reinforcement learning |
+| `DiffuGRPO` | `training.rl_train` | Group Relative Policy Optimization for dLLMs |
+| `DiFFPO` | `training.rl_train` | PPO with importance-ratio clipping + joint sampler |
+
+### `DiffuGRPO`
+
+```python
+from dllm_reason.training.rl_train import DiffuGRPO, RLTrainConfig
+
+trainer = DiffuGRPO(
+    model=model, ref_model=ref_model,
+    scheduler=scheduler, reward_fn=reward_fn,
+    train_loader=loader,
+    config=RLTrainConfig(lr=1e-5, group_size=8, kl_coeff=0.01),
+)
+trainer.train()
+```
+
+### `DiFFPO`  *(Zhao et al. 2024, [arXiv:2510.02212](https://arxiv.org/abs/2510.02212))*
+
+Two innovations over GRPO:
+1. **PPO importance-ratio clipping** — `ratio.clamp(1-ε, 1+ε)` stabilises policy updates
+2. **`StepBudgetController`** — lightweight MLP jointly trained to predict the optimal number
+   of denoising steps per prompt, reducing unnecessary NFEs on easy prompts
+
+```python
+from dllm_reason.training.rl_train import DiFFPO, DiFFPOConfig, StepBudgetController
+
+trainer = DiFFPO(
+    model=model, ref_model=ref_model,
+    scheduler=scheduler, reward_fn=reward_fn,
+    train_loader=loader,
+    config=DiFFPOConfig(
+        ppo_clip_eps=0.2,       # ε for importance-ratio clipping
+        train_sampler=True,     # jointly train StepBudgetController
+        min_steps=8,            # controller lower bound
+        max_steps=128,          # controller upper bound
+        step_budget_lambda=0.1, # weight of L_step in total loss
+        kl_coeff=0.01,
+    ),
+)
+trainer.train()
+# Total loss = L_PPO + kl_coeff * KL + step_budget_lambda * L_step
+```
 
 ---
 
@@ -293,7 +367,69 @@ python scripts/generate_latex_table.py results/summary.json --output paper_table
 
 ---
 
-## 8. Library (`dllm_reason.library`)
+## 8. Episode Pipeline (`dllm_reason.library.episode`)
+
+### `DAGEpisode`
+
+One interaction record: `prompt → strategy → output → evaluation`.
+
+```python
+from dllm_reason.library.episode import DAGEpisode
+
+ep = DAGEpisode(
+    prompt="What is 12 * 15?",
+    task_type="math",              # "math" | "code" | "qa" | "general"
+    ground_truth="180",
+    strategy_name="cot",
+    dag_seq_len=128,               # 0 if no explicit DAG
+    dag_adjacency=[[...]],         # 2-D int list or None
+    output="The answer is 180.",
+    correct=True,                  # bool | None (None = not yet evaluated)
+    score=1.0,                     # 0.0–1.0
+    comment="exact match",
+    model_id="checkpoints/llada-instruct",
+    num_steps=128, block_length=32, temperature=0.0,
+)
+
+# Properties
+ep.is_evaluated   # bool
+ep.reward         # +1.0 / -1.0 / 0.0
+
+# Reconstruct TokenDAG
+dag = ep.to_token_dag(device="cpu")
+```
+
+### `EpisodeStore`
+
+SQLite-backed persistent store with WAL mode.
+
+```python
+from dllm_reason.library.episode import EpisodeStore
+
+store = EpisodeStore("episodes/gsm8k.db")
+
+# CRUD
+store.add(ep)
+ep2 = store.get(ep.episode_id)
+store.update_eval(ep.episode_id, correct=True, score=1.0, comment="4")
+store.delete(ep.episode_id)
+
+# Queries
+all_eps = store.list_all(limit=100)
+correct = store.query(task_type="math", correct=True, min_score=0.8)
+by_strat = store.query(strategy_name="cot", evaluated_only=True)
+
+# Memory-safe training iterator (paged)
+for ep in store.iter_for_training(task_type="math", correct_only=True, batch_size=64):
+    ...
+
+store.print_stats()   # prints accuracy, counts by task/strategy
+s = store.stats()     # dict: total, evaluated, correct, accuracy, by_task, by_strategy
+```
+
+---
+
+## 9. Library (`dllm_reason.library`)
 
 ### Quick Start
 
@@ -350,7 +486,7 @@ config.enabled = False                        # Kill entire library
 
 ---
 
-## 9. Model Serving (`scripts/serve.py`)
+## 10. Model Serving (`scripts/serve.py`)
 
 ### REST API
 
@@ -383,7 +519,65 @@ curl -X POST http://localhost:8000/generate \
 
 ---
 
-## 10. CLI Entry Points
+## 11. Episode & Learning Scripts
+
+### `scripts/collect_episodes.py`
+
+```bash
+# Single prompt
+python scripts/collect_episodes.py \
+    --model_id checkpoints/llada-instruct --model_type llada \
+    --prompt "What is 12*15?" --ground_truth "180" --task_type math \
+    --strategy cot confidence \   # multiple strategies in one run
+    --eval_mode auto \            # auto | manual | none
+    --db_path episodes/gsm8k.db
+
+# Dataset (JSONL: {"prompt": ..., "answer": ...})
+python scripts/collect_episodes.py \
+    --dataset_path data/gsm8k.jsonl --n_samples 500 \
+    --strategy confidence cot adaptive_dynamic \
+    --gen_length 128 --num_steps 128 --block_length 32 --temperature 0.0
+```
+
+### `scripts/learn_from_episodes.py`
+
+```bash
+# Stats only
+python scripts/learn_from_episodes.py --model_id none --mode stats
+
+# SFT  (correct episodes only)
+python scripts/learn_from_episodes.py \
+    --model_id checkpoints/llada-instruct --mode sft \
+    --task_type math --dag_aware \
+    --epochs 3 --lr 1e-5 --batch_size 4 \
+    --output_dir checkpoints/sft-math
+
+# GRPO
+python scripts/learn_from_episodes.py --mode grpo \
+    --kl_coeff 0.01 --output_dir checkpoints/grpo-math
+
+# DiFFPO  (Zhao et al. 2024)
+python scripts/learn_from_episodes.py --mode diffppo \
+    --ppo_clip_eps 0.2 --train_sampler \
+    --min_steps 8 --max_steps 128 --step_budget_lambda 0.1 \
+    --output_dir checkpoints/diffppo-math
+```
+
+### `scripts/search_dag_live.py`
+
+```bash
+python scripts/search_dag_live.py \
+    --model llada --checkpoint checkpoints/llada-instruct \
+    --dataset gsm8k --method evolutionary --budget 100 \
+    --init_templates cot skeleton bidirectional \
+    --fitness accuracy --fitness_samples 50 \
+    --seq_len 256 --port 8765
+# Opens http://localhost:8765 — fitness curve + DAG adjacency heatmap live
+```
+
+---
+
+## 12. CLI Entry Points
 
 ```bash
 dllm-train      # -> scripts/train.py
@@ -392,11 +586,15 @@ dllm-eval-dags  # -> scripts/eval_dags.py
 dllm-search     # -> scripts/search_dag.py
 dllm-viz        # -> scripts/visualize_dag.py
 dllm-serve      # -> scripts/serve.py
+# No package entrypoint (run directly):
+python scripts/search_dag_live.py
+python scripts/collect_episodes.py
+python scripts/learn_from_episodes.py
 ```
 
 ---
 
-## 11. Configuration
+## 13. Configuration
 
 All configs in `configs/` directory, compatible with Hydra/OmegaConf.
 

@@ -1,6 +1,8 @@
 # References
 
-All baselines, benchmarks, and search methods used in dLLM-Reason, with paper references.
+All baselines, benchmarks, search methods, and RL algorithms used in dLLM-Reason, with paper references.
+
+> Root-level [REFERENCES.md](../REFERENCES.md) is kept in sync and organised by component type.
 
 ---
 
@@ -52,6 +54,15 @@ All baselines, benchmarks, and search methods used in dLLM-Reason, with paper re
 | End-to-End DAG Learning | Joint DAG structure + task loss optimization via differentiable scheduling | Novel contribution; builds on NOTEARS + Gumbel-Sigmoid relaxation |
 | NAS-SuperNet (DARTS-like) | Continuous relaxation over span-level superset DAG | Liu et al., "DARTS: Differentiable Architecture Search", ICLR 2019. [[arXiv:1806.09055]](https://arxiv.org/abs/1806.09055) |
 | NAS-Controller (ENAS-like) | GRU controller generates DAG configurations, trained with REINFORCE | Pham et al., "Efficient Neural Architecture Search via Parameter Sharing", ICML 2018. [[arXiv:1802.03268]](https://arxiv.org/abs/1802.03268) |
+
+---
+
+## Reinforcement Learning for Diffusion LMs
+
+| Method | Description | Reference |
+|--------|-------------|-----------|
+| `DiffuGRPO` | Group Relative Policy Optimization adapted for dLLMs; group-relative advantage, no importance weights | d1 — Scaling Reasoning in Diffusion LLMs. [[GitHub]](https://github.com/dllm-reasoning/d1) |
+| `DiFFPO` | PPO with importance-ratio clipping + joint sampler training (`StepBudgetController` predicts adaptive step budget per prompt) | Zhao, Liang, Tang, Yao, Kallus. "Training Diffusion LLMs to Reason Fast and Furious via Reinforcement Learning", 2024. [[arXiv:2510.02212]](https://arxiv.org/abs/2510.02212) |
 
 ---
 

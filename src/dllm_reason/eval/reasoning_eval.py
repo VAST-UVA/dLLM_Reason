@@ -132,10 +132,9 @@ class ReasoningEvaluator:
 
             # Generate
             result = sampler.sample(
-                batch_size=1,
-                seq_len=prompt_ids.shape[1],
                 prompt_ids=prompt_ids,
                 prompt_mask=prompt_mask,
+                gen_length=prompt_ids.shape[1] - int(prompt_mask[0].sum().item()),
             )
 
             # Decode generated portion

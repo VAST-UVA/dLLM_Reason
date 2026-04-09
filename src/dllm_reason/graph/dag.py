@@ -312,6 +312,133 @@ class TokenDAG:
         closure = (reach > 0) & ~torch.eye(self._seq_len, dtype=torch.bool, device=self.device)
         return TokenDAG(closure)
 
+    def to_visual_str(self, max_cols: int = 64) -> str:
+        """Return a visual string representation of this DAG for terminal display.
+
+        Output sections
+        ---------------
+        1. Header  — n / edges / depth / density.
+        2. Level bar-chart  — one bar per topological level; bar width is
+           proportional to the number of token positions at that level.
+           Reading top-to-bottom gives the unmask order.
+        3. Adjacency heatmap  — rows are src positions, columns are dst
+           positions.  '#' = edge present, '.' = no edge.  When seq_len
+           exceeds *max_cols* the grid is uniformly down-sampled so it
+           always fits in roughly *max_cols* characters wide.
+
+        Example output for ``TokenDAG.linear_chain(8)``::
+
+            ========================================================
+              TokenDAG  n=8  edges=7  depth=8  density=0.125
+            ========================================================
+              Topological levels  (level 0 unmasked first)
+              --------------------------------------------------------
+              Lv  0 |#####...................................|    1  [0]
+              Lv  1 |#####...................................|    1  [1]
+              ...
+              Adjacency matrix  (# = edge i->j,  . = no edge)
+              --------------------------------------------------------
+                   0       (display column index)
+                   01234567
+                   --------
+               0  |.#......
+               1  |..#.....
+               ...
+            ========================================================
+        """
+        n      = self._seq_len
+        edges  = self.num_edges()
+        adj_cpu = self._adjacency.cpu()
+
+        try:
+            levels = self.topological_levels()
+            depth  = len(levels)
+        except ValueError:
+            return f"TokenDAG(n={n}, edges={edges}, INVALID - contains a cycle)"
+
+        density = edges / max(n * (n - 1), 1)
+        W    = max(max_cols + 12, 56)   # total display width
+        SEP  = "=" * W
+        THIN = "-" * W
+        lines = [SEP]
+
+        # ── 1. Header ────────────────────────────────────────────────────
+        lines.append(
+            f"  TokenDAG  n={n}  edges={edges}  depth={depth}"
+            f"  density={density:.3f}"
+        )
+        lines.append(SEP)
+
+        # ── 2. Level bar-chart ───────────────────────────────────────────
+        lines.append("  Topological levels  (level 0 unmasked first)")
+        lines.append("  " + THIN)
+
+        bar_max = max(W - 34, 8)      # chars available for the bar body
+        for i, level in enumerate(levels):
+            k       = len(level)
+            # Clamp so bar_fill is always in [1, bar_max]
+            bar_fill = min(bar_max, max(1, round(bar_max * k / n)))
+            bar      = "#" * bar_fill + "." * (bar_max - bar_fill)
+
+            # Compact position summary
+            if k <= 8:
+                pos_s = "[" + " ".join(str(p) for p in level) + "]"
+            elif k <= 16:
+                head  = " ".join(str(p) for p in level[:4])
+                pos_s = "[" + head + " .. " + str(level[-1]) + "]"
+            else:
+                pos_s = f"[{level[0]}..{level[-1]}, x{k}]"
+
+            lines.append(f"  Lv {i:2d} |{bar}|  {k:4d}  {pos_s}")
+
+        # ── 3. Adjacency heatmap ─────────────────────────────────────────
+        lines.append("")
+        lines.append("  Adjacency matrix  (# = edge i->j,  . = no edge)")
+        lines.append("  " + THIN)
+
+        # Down-sample uniformly so grid fits in max_cols columns
+        stride = max(1, -(-n // max_cols))   # == ceil(n / max_cols)
+        pts    = list(range(0, n, stride))
+        m      = len(pts)
+
+        # Width of the row-label field, e.g. "  255 |" -> label_w=3
+        label_w = len(str(pts[-1])) if pts else 1
+        # How many chars appear before the cell data on every row line:
+        #   "  " + label_w chars + " |" = label_w + 4
+        row_prefix_w = label_w + 4
+        indent = " " * row_prefix_w   # same indent for ruler lines
+
+        # Ruler: show the *display* column index (not the position value)
+        # so the header always lines up exactly with the cell characters.
+        ruler_tens = "".join(
+            str((ci // 10) % 10) if ci % 10 == 0 else " "
+            for ci in range(m)
+        )
+        ruler_ones = "".join(str(ci % 10) for ci in range(m))
+
+        lines.append(f"{indent}{ruler_tens}  (display column index)")
+        lines.append(f"{indent}{ruler_ones}")
+        lines.append(f"{indent}{'-' * m}")
+
+        for r in pts:
+            cells = "".join(
+                "#" if adj_cpu[r, c].item() else "."
+                for c in pts
+            )
+            lines.append(f"  {r:{label_w}d} |{cells}")
+
+        if stride > 1:
+            lines.append(
+                f"  (down-sampled: each cell = {stride} positions;"
+                f" {n} total, {m} shown)"
+            )
+
+        lines.append(SEP)
+        return "\n".join(lines)
+
+    def __str__(self) -> str:
+        return self.to_visual_str()
+
     def __repr__(self) -> str:
         return f"TokenDAG(seq_len={self._seq_len}, edges={self.num_edges()}, depth={self.depth()})"
 

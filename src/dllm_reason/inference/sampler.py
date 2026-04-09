@@ -197,17 +197,23 @@ class DiffusionSampler:
                 if block_remaining == 0:
                     break
 
+                # ── Timestep: goes from ~1.0 (fully masked) → ~0.0 (clean)
+                total_step = block_idx * steps_per_block + step
+                t_val = 1.0 - total_step / max(cfg.num_steps, 1)
+                t = torch.full((x.shape[0],), t_val, device=device, dtype=torch.float32)
+
                 # ── Forward pass ──────────────────────────────────────────
                 if cfg.cfg_scale > 0:
                     un_x = x.clone()
                     un_x[prompt_index] = mask_id
+                    t_double = t.repeat(2)
                     logits_all = self.model.forward(
-                        torch.cat([x, un_x], dim=0)
+                        torch.cat([x, un_x], dim=0), t_double
                     ).logits
                     logits, un_logits = logits_all.chunk(2, dim=0)
                     logits = un_logits + (cfg.cfg_scale + 1) * (logits - un_logits)
                 else:
-                    logits = self.model.forward(x).logits  # (1, L, V)
+                    logits = self.model.forward(x, t).logits  # (1, L, V)
 
                 # ── Sample candidate x0 for every position ────────────────
                 logits_noisy = _add_gumbel_noise(logits, cfg.temperature)
@@ -259,7 +265,8 @@ class DiffusionSampler:
         # step counts, but guards against off-by-one in custom schedulers).
         remaining_mask = (x == mask_id) & ~prompt_mask
         if remaining_mask.any():
-            logits = self.model.forward(x).logits
+            t_zero = torch.zeros(x.shape[0], device=device, dtype=torch.float32)
+            logits = self.model.forward(x, t_zero).logits
             logits[..., mask_id] = -float("inf")
             x = torch.where(remaining_mask, logits.argmax(dim=-1), x)
 
