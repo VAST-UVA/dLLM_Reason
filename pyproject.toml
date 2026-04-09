@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dllm-reason"
-version = "1.4.1"
+version = "1.4.2"
 description = "DAG-guided discrete diffusion language models for reasoning"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -57,13 +57,23 @@ serve = [
 ]
 
 [project.scripts]
-dllm-train = "dllm_reason.cli:train"
-dllm-eval = "dllm_reason.cli:evaluate"
-dllm-eval-dags = "dllm_reason.cli:eval_dags"
-dllm-search = "dllm_reason.cli:search_dag"
-dllm-viz = "dllm_reason.cli:visualize_dag"
-dllm-serve = "dllm_reason.cli:serve"
-dllm-webui = "dllm_reason.cli:webui"
+dllm-train            = "dllm_reason.cli:train"
+dllm-eval             = "dllm_reason.cli:evaluate"
+dllm-eval-dags        = "dllm_reason.cli:eval_dags"
+dllm-search           = "dllm_reason.cli:search_dag"
+dllm-viz              = "dllm_reason.cli:visualize_dag"
+dllm-serve            = "dllm_reason.cli:serve"
+dllm-webui            = "dllm_reason.cli:webui"
+dllm-pipeline         = "dllm_reason.cli:run_pipeline"
+dllm-collect          = "dllm_reason.cli:collect_episodes"
+dllm-learn            = "dllm_reason.cli:learn_from_episodes"
+dllm-library          = "dllm_reason.cli:manage_library"
+dllm-bench-schedulers = "dllm_reason.cli:benchmark_schedulers"
+dllm-analyze-dag      = "dllm_reason.cli:analyze_dag"
+dllm-episodes         = "dllm_reason.cli:inspect_episodes"
+dllm-templates        = "dllm_reason.cli:generate_templates"
+dllm-feedback         = "dllm_reason.cli:add_feedback"
+dllm-merge-dags       = "dllm_reason.cli:merge_dags"
 
 [project.urls]
 "Homepage" = "https://github.com/BDeMo/dLLM_Reason"

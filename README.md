@@ -25,67 +25,133 @@ Episode Pipeline
 
 ## Installation
 
+### Requirements
+
+- Python ≥ 3.10
+- PyTorch ≥ 2.1 (CUDA recommended for model inference)
+
+### From PyPI
+
 ```bash
-# From PyPI
+# Core package
 pip install dllm-reason
 
-# From GitHub (latest dev)
-pip install "git+https://github.com/BDeMo/dLLM_Reason.git"
+# With DAG Library retrieval (FAISS + sentence-transformers)
+pip install "dllm-reason[library]"
 
-# With all extras
+# With REST API server
+pip install "dllm-reason[serve]"
+
+# Full install (all extras)
 pip install "dllm-reason[dev,library,serve]"
+```
 
-# Editable (development)
+### From Source (recommended for research)
+
+```bash
 git clone https://github.com/BDeMo/dLLM_Reason.git
 cd dLLM_Reason
 pip install -e ".[dev,library,serve]"
+```
+
+### China mirror (HuggingFace models blocked)
+
+```bash
+pip install dllm-reason -i https://pypi.tuna.tsinghua.edu.cn/simple
+# or set mirror for model downloads:
+python scripts/download_models.py --mirror https://hf-mirror.com
+python scripts/download_datasets.py --mirror https://hf-mirror.com
+```
+
+### Verify installation
+
+```bash
+python -c "import dllm_reason; print(dllm_reason.__version__)"
+dllm-pipeline --help
 ```
 
 ### Optional Extras
 
 | Extra | Packages | Purpose |
 |-------|----------|---------|
+| `library` | faiss-cpu, sentence-transformers, scikit-learn | DAG Library retrieval & semantic search |
+| `serve` | fastapi, uvicorn, bitsandbytes | REST API server + 4/8-bit quantization |
 | `dev` | pytest, pytest-cov, ruff | Testing and linting |
-| `library` | faiss-cpu, sentence-transformers, scikit-learn | DAG Library retrieval |
-| `serve` | fastapi, uvicorn, bitsandbytes | REST API serving + quantization |
 
 ### CLI Commands
 
-After installation, the following commands are available globally:
+After `pip install dllm-reason`, the following commands are available globally:
+
+**Pipeline & Training**
 
 | Command | Script | Description |
 |---------|--------|-------------|
-| `dllm-eval-dags` | `scripts/eval_dags.py` | Multi-strategy × multi-benchmark evaluation |
-| `dllm-serve` | `scripts/serve.py` | REST API server with hot-switching strategies |
-| `dllm-train` | `scripts/train.py` | Model pretraining / fine-tuning |
-| `dllm-eval` | `scripts/evaluate.py` | Single-model evaluation |
-| `dllm-search` | `scripts/search_dag.py` | DAG structure search (static) |
-| `dllm-viz` | `scripts/visualize_dag.py` | DAG visualization |
-| `dllm-webui` | `scripts/webui.py` | Interactive Web UI dashboard |
-| — | `scripts/search_dag_live.py` | DAG search with **real-time web dashboard** |
-| — | `scripts/collect_episodes.py` | Collect (prompt, DAG, output, eval) episodes |
-| — | `scripts/learn_from_episodes.py` | Fine-tune from episodes: SFT / GRPO / DiFFPO |
+| `dllm-pipeline` | `run_pipeline.py` | End-to-end: download → collect → search → learn → eval |
+| `dllm-train` | `train.py` | Pretrain / fine-tune a dLLM |
+| `dllm-collect` | `collect_episodes.py` | Collect episodes with multiple strategies |
+| `dllm-learn` | `learn_from_episodes.py` | SFT / GRPO / DiFFPO / UnmaskRL from episodes |
+
+**Evaluation**
+
+| Command | Script | Description |
+|---------|--------|-------------|
+| `dllm-eval` | `evaluate.py` | Single-model evaluation on a benchmark |
+| `dllm-eval-dags` | `eval_dags.py` | Multi-strategy × multi-benchmark evaluation |
+| `dllm-bench-schedulers` | `benchmark_schedulers.py` | Compare all 11 schedulers side-by-side |
+| `dllm-episodes` | `inspect_episodes.py` | Inspect / export EpisodeStore |
+
+**DAG Search & Management**
+
+| Command | Script | Description |
+|---------|--------|-------------|
+| `dllm-search` | `search_dag.py` | DAG structure search (greedy / evolutionary) |
+| `dllm-analyze-dag` | `analyze_dag.py` | DAG structural statistics + visualizations |
+| `dllm-templates` | `generate_templates.py` | Generate and save named DAG templates |
+| `dllm-merge-dags` | `merge_dags.py` | Merge multiple DAGs (union / intersection / weighted) |
+
+**DAG Library**
+
+| Command | Script | Description |
+|---------|--------|-------------|
+| `dllm-library` | `manage_library.py` | CRUD + retrieval for the DAG Library |
+| `dllm-feedback` | `add_feedback.py` | Add benchmark scores / human ratings / Elo |
+
+**Serving & Visualization**
+
+| Command | Script | Description |
+|---------|--------|-------------|
+| `dllm-serve` | `serve.py` | REST API server with hot-switching strategies |
+| `dllm-webui` | `webui.py` | Interactive Web UI dashboard |
+| `dllm-viz` | `visualize_dag.py` | Render a DAG to PNG / interactive plot |
+| — | `search_dag_live.py` | DAG search with real-time web dashboard |
 
 ---
 
 ## Quick Start
 
 ```bash
-# 1. Download model & datasets
-python scripts/download_models.py              # -> checkpoints/llada-instruct/
-python scripts/download_datasets.py            # -> datasets/
+# ── Step 0: Install ───────────────────────────────────────────────
+pip install "dllm-reason[library,serve]"
 
-# China HuggingFace mirror
-python scripts/download_models.py --mirror https://hf-mirror.com
+# ── Step 1: Download model and datasets ──────────────────────────
+python scripts/download_models.py              # → checkpoints/llada-instruct/
+python scripts/download_datasets.py            # → datasets/
+
+# China mirror
+python scripts/download_models.py   --mirror https://hf-mirror.com
 python scripts/download_datasets.py --mirror https://hf-mirror.com
 
-# 2. Smoke test (5 samples, confidence strategy)
-dllm-eval-dags --dags confidence --benchmarks mbpp --num_samples 5
+# ── Step 2: Run the full pipeline (one command) ───────────────────
+dllm-pipeline \
+    --checkpoint checkpoints/llada-instruct \
+    --dataset gsm8k \
+    --stages download collect search learn eval \
+    --rl_mode grpo
 
-# 3. Full comparison (all 13 strategies x all 10 benchmarks)
-bash scripts/runs/full_comparison.sh
+# ── Step 3: Smoke-test evaluation ────────────────────────────────
+dllm-eval-dags --dags confidence --benchmarks gsm8k --num_samples 5
 
-# 4. Start REST API server
+# ── Step 4: Start the REST API server ────────────────────────────
 dllm-serve --model_id checkpoints/llada-instruct --quantize 4bit
 ```
 
