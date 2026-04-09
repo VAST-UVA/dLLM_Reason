@@ -377,9 +377,28 @@ def parse_args():
     p.add_argument("--population_size", type=int, default=20)
     p.add_argument("--mutation_rate", type=float, default=0.3)
 
-    p.add_argument("--init_dag", default="empty",
-                   choices=["empty", "cot", "skeleton", "linear"])
-    p.add_argument("--init_cot_steps", type=int, default=4)
+    p.add_argument("--init_dag", default=None,
+                   choices=["empty", "cot", "skeleton", "linear",
+                            "bidirectional", "answer_first", "interleaved",
+                            "random_low", "random_high"],
+                   help="Single explicit seed DAG (legacy; superseded by --init_templates)")
+    p.add_argument("--init_cot_steps", type=int, default=4,
+                   help="num_steps for the cot template when --init_dag=cot")
+    p.add_argument(
+        "--init_templates", nargs="*",
+        metavar="TEMPLATE",
+        default=None,
+        help=(
+            "Template names to use as search initialization seeds.  "
+            "For evolutionary: added to initial population.  "
+            "For greedy: evaluated first, best one chosen as start.  "
+            "Available: cot skeleton bidirectional answer_first interleaved "
+            "linear empty random_low random_high.  "
+            "Pass with no names (--init_templates) to use the default set, "
+            "or list specific names.  "
+            "Overrides --init_dag."
+        ),
+    )
 
     p.add_argument("--fitness", default="accuracy",
                    choices=["accuracy", "perplexity", "combined"])
@@ -409,20 +428,16 @@ def parse_args():
 # ── Helpers (same as search_dag.py) ───────────────────────────────────────────
 
 def build_initial_dag(name, seq_len, cot_steps, device):
+    """Build a single named template (legacy helper for --init_dag)."""
+    from dllm_reason.graph.templates import build_template
     from dllm_reason.graph.dag import TokenDAG
-    if name == "empty":
-        return TokenDAG.empty(seq_len, device=device)
-    elif name == "cot":
+    if name is None:
+        return None
+    if name == "cot":
+        # cot_steps is the only non-default parameter
         from dllm_reason.graph.templates import chain_of_thought_dag
         return chain_of_thought_dag(seq_len, cot_steps, device=device)
-    elif name == "linear":
-        return TokenDAG.linear_chain(seq_len, device=device)
-    elif name == "skeleton":
-        from dllm_reason.graph.templates import skeleton_then_detail_dag
-        return skeleton_then_detail_dag(
-            seq_len, list(range(0, seq_len, 3)), list(range(1, seq_len, 3)),
-            device=device,
-        )
+    return build_template(name, seq_len, device=device)
 
 
 # ── Search thread ──────────────────────────────────────────────────────────────
@@ -493,22 +508,42 @@ def run_search(args, tracker: LiveTracker):
     # Wrap with live tracker
     live_eval_fn = tracker.wrap(eval_fn)
 
-    # Initial DAG + searcher
-    initial_dag = build_initial_dag(args.init_dag, args.seq_len,
-                                    args.init_cot_steps, device)
+    # ── Resolve init templates / seed DAG ────────────────────────────────
+    # --init_templates takes priority; --init_dag is the legacy single-DAG path.
+    # --init_templates with no names → use searcher default set (pass None)
+    # --init_templates with names   → use those names (pass list)
+    # neither flag set              → init_templates=None (searcher decides)
+    if args.init_templates is not None:
+        # user passed --init_templates (possibly with zero or more names)
+        init_templates = args.init_templates if args.init_templates else None
+        initial_dag = None
+        if init_templates:
+            print(f"Template seeds: {init_templates}")
+        else:
+            print("Template seeds: default set")
+    else:
+        init_templates = None
+        initial_dag = build_initial_dag(args.init_dag, args.seq_len,
+                                        args.init_cot_steps, device)
+        if initial_dag is not None:
+            print(f"Single seed DAG: {args.init_dag} ({initial_dag.num_edges()} edges)")
 
     import dllm_reason.search.greedy, dllm_reason.search.evolutionary
     import dllm_reason.search.rl_policy, dllm_reason.search.differentiable
 
     if args.method == "greedy":
         from dllm_reason.search.greedy import GreedyEdgeSearch
-        searcher = GreedyEdgeSearch(initial_dag=initial_dag)
+        searcher = GreedyEdgeSearch(
+            initial_dag=initial_dag,
+            init_templates=init_templates,
+        )
     elif args.method == "evolutionary":
         from dllm_reason.search.evolutionary import EvolutionarySearch
         searcher = EvolutionarySearch(
             population_size=args.population_size,
             mutation_rate=args.mutation_rate,
-            initial_dags=[initial_dag],
+            initial_dags=[initial_dag] if initial_dag is not None else [],
+            init_templates=init_templates,
         )
     elif args.method == "rl_policy":
         from dllm_reason.search.rl_policy import RLPolicySearch
