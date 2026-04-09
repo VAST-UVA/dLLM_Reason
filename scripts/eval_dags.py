@@ -2,8 +2,8 @@
 
 Usage:
     python scripts/eval_dags.py \
-        --benchmarks mbpp humaneval hotpotqa mmlu \
-        --dags empty linear cot skeleton bidirectional \
+        --benchmarks mbpp humaneval hotpotqa mmlu gsm8k math arc prontoqa \
+        --dags confidence random entropy semi_ar linear cot skeleton bidirectional answer_first \
         --model_id GSAI-ML/LLaDA-8B-Instruct \
         --output_dir results/ \
         --num_steps 128 \
@@ -24,55 +24,107 @@ import torch
 # Argument parsing
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _load_config(path: str) -> dict:
+    """Load a YAML config file and return a flat dict of all values."""
+    import yaml
+    with open(path) as f:
+        raw = yaml.safe_load(f)
+    # Flatten nested sections into a single dict
+    flat = {}
+    for section in raw.values():
+        if isinstance(section, dict):
+            flat.update(section)
+    return flat
+
+
 def parse_args():
+    # ── Pre-parse to get --config path before building the full parser ────────
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--config", type=str, default=None)
+    pre_args, remaining = pre.parse_known_args()
+
+    # Load config file defaults (if provided)
+    cfg_defaults: dict = {}
+    if pre_args.config:
+        cfg_defaults = _load_config(pre_args.config)
+        print(f"[config] Loaded: {pre_args.config}")
+    elif Path("configs/eval_default.yaml").exists():
+        cfg_defaults = _load_config("configs/eval_default.yaml")
+        print("[config] Loaded: configs/eval_default.yaml (auto-detected)")
+
+    # ── Build main parser — defaults come from config, CLI overrides them ─────
     parser = argparse.ArgumentParser(description="Evaluate LLaDA with DAG unmasking strategies")
+    parser.add_argument("--config", type=str, default=None,
+                        help="Path to YAML config file (defaults to configs/eval_default.yaml)")
+
+    def D(key, fallback):
+        """Return config value if present, else fallback."""
+        return cfg_defaults.get(key, fallback)
 
     # Model
-    parser.add_argument("--model_id", type=str, default="GSAI-ML/LLaDA-8B-Instruct",
-                        help="HuggingFace model ID for LLaDA")
-    parser.add_argument("--torch_dtype", type=str, default="bfloat16",
+    parser.add_argument("--model_id", type=str, default=D("model_id", "GSAI-ML/LLaDA-8B-Instruct"))
+    parser.add_argument("--torch_dtype", type=str, default=D("torch_dtype", "bfloat16"),
                         choices=["bfloat16", "float16", "float32"])
-    parser.add_argument("--device_map", type=str, default="auto",
-                        help="Device map for model loading (auto, cuda:0, cpu)")
+    parser.add_argument("--device_map", type=str, default=D("device_map", "auto"))
 
     # Benchmarks
     parser.add_argument("--benchmarks", nargs="+",
-                        default=["mbpp", "humaneval", "hotpotqa", "mmlu"],
-                        choices=["mbpp", "humaneval", "hotpotqa", "mmlu"],
-                        help="Benchmarks to evaluate on")
-    parser.add_argument("--num_samples", type=int, default=None,
-                        help="Limit number of samples per benchmark (None=all)")
+                        default=D("benchmarks", ["mbpp", "humaneval"]),
+                        choices=["mbpp", "humaneval", "hotpotqa", "mmlu",
+                                 "gsm8k", "math", "arc", "prontoqa",
+                                 "gpqa", "aime"])
+    parser.add_argument("--num_samples", type=int, default=D("num_samples", None))
 
     # DAG strategies
     parser.add_argument("--dags", nargs="+",
-                        default=["empty", "linear", "cot", "skeleton", "bidirectional"],
-                        choices=["empty", "linear", "cot", "bidirectional",
-                                 "confidence", "skeleton", "answer_first"],
-                        help="DAG unmasking strategies to evaluate")
+                        default=D("dags", ["confidence"]),
+                        choices=["random", "linear", "cot", "bidirectional",
+                                 "confidence", "skeleton", "answer_first",
+                                 "entropy", "semi_ar",
+                                 "maskgit_cosine", "critical_token_first", "curriculum",
+                                 "adaptive_dynamic"])
 
     # Inference params
-    parser.add_argument("--num_steps", type=int, default=128,
-                        help="Number of diffusion sampling steps")
-    parser.add_argument("--temperature", type=float, default=0.0,
-                        help="Sampling temperature (0 = greedy/max)")
-    parser.add_argument("--max_new_tokens", type=int, default=512,
-                        help="Max tokens to generate")
-    parser.add_argument("--generation_len", type=int, default=512,
-                        help="Generation sequence length appended to prompt")
+    parser.add_argument("--num_steps",    type=int,   default=D("num_steps", 128))
+    parser.add_argument("--block_length", type=int,   default=D("block_length", 32))
+    parser.add_argument("--temperature",  type=float, default=D("temperature", 0.0))
+    parser.add_argument("--cfg_scale",    type=float, default=D("cfg_scale", 0.0))
+    parser.add_argument("--remasking",    type=str,   default=D("remasking", "low_confidence"),
+                        choices=["low_confidence", "random"])
+    parser.add_argument("--max_new_tokens", type=int, default=D("max_new_tokens", 128))
+    parser.add_argument("--generation_len", type=int, default=D("max_new_tokens", 128),
+                        help="Alias for max_new_tokens")
 
-    # CoT DAG params
-    parser.add_argument("--cot_steps", type=int, default=4,
-                        help="Number of reasoning steps for CoT DAG")
+    # CoT / MMLU
+    parser.add_argument("--cot_steps",     type=int,  default=D("cot_steps", 4))
+    parser.add_argument("--mmlu_subjects", nargs="+", default=D("mmlu_subjects", None))
 
-    # MMLU params
-    parser.add_argument("--mmlu_subjects", nargs="+", default=None,
-                        help="MMLU subjects to test (None = default subset)")
+    # Output / control
+    parser.add_argument("--output_dir",   type=str,  default=D("output_dir", "results"))
+    parser.add_argument("--resume",       action="store_true", default=D("resume", False))
+    parser.add_argument("--no_run_tests", action="store_true",
+                        default=not D("run_tests", True))
+    parser.add_argument("--verbose_errors", action="store_true",
+                        default=D("verbose_errors", False),
+                        help="Print per-sample stderr/error/timeout on failure")
 
-    # Output
-    parser.add_argument("--output_dir", type=str, default="results",
-                        help="Directory to save results")
-    parser.add_argument("--resume", action="store_true",
-                        help="Skip already-completed (benchmark, dag) pairs")
+    # ── Detailed output saving ─────────────────────────────────────────────────
+    parser.add_argument("--save_outputs", action="store_true",
+                        default=D("save_outputs", False),
+                        help="Save per-sample QA pairs / ground truth to JSON + Excel")
+    parser.add_argument("--no_save_qa", action="store_true",
+                        default=not D("save_qa", True),
+                        help="Exclude prompt+generated output from saved files")
+    parser.add_argument("--no_save_ground_truth", action="store_true",
+                        default=not D("save_ground_truth", True),
+                        help="Exclude reference answers from saved files")
+    parser.add_argument("--record_trajectory", action="store_true",
+                        default=D("record_trajectory", False),
+                        help="Record per-step unmasking states (slow; saved to *_trajectory.json)")
+    parser.add_argument("--output_formats", nargs="+",
+                        default=D("output_formats", ["json", "xlsx"]),
+                        choices=["json", "xlsx"],
+                        help="File formats to write when --save_outputs is on")
 
     return parser.parse_args()
 
@@ -92,14 +144,45 @@ def build_dag_scheduler(dag_name: str, seq_len: int, args, device: torch.device)
     from dllm_reason.scheduler.confidence_scheduler import ConfidenceScheduler
     from dllm_reason.scheduler.random_scheduler import RandomScheduler
     from dllm_reason.scheduler.linear_scheduler import LinearScheduler
+    from dllm_reason.scheduler.entropy_scheduler import EntropyScheduler
+    from dllm_reason.scheduler.semi_ar_scheduler import SemiAutoregressiveScheduler
+    from dllm_reason.scheduler.maskgit_scheduler import MaskGITCosineScheduler
+    from dllm_reason.scheduler.critical_token_scheduler import CriticalTokenFirstScheduler
+    from dllm_reason.scheduler.curriculum_scheduler import CurriculumScheduler
 
-    if dag_name == "empty":
+    if dag_name == "random":
         # No DAG constraints — pure random unmasking
         return RandomScheduler(), None
 
     elif dag_name == "confidence":
         # No DAG constraints — confidence-based (LLaDA default)
         return ConfidenceScheduler(), None
+
+    elif dag_name == "entropy":
+        # No DAG constraints — lowest-entropy (most certain) first
+        return EntropyScheduler(), None
+
+    elif dag_name == "semi_ar":
+        # Semi-autoregressive: block-by-block left-to-right, confidence within block
+        return SemiAutoregressiveScheduler(block_size=args.block_length), None
+
+    elif dag_name == "maskgit_cosine":
+        # MaskGIT cosine schedule: more tokens early, fewer later
+        return MaskGITCosineScheduler(), None
+
+    elif dag_name == "critical_token_first":
+        # Unmask most influential (highest KL from uniform) positions first
+        return CriticalTokenFirstScheduler(), None
+
+    elif dag_name == "curriculum":
+        # Easy (high confidence + low entropy) tokens first, hard tokens last
+        return CurriculumScheduler(), None
+
+    elif dag_name == "adaptive_dynamic":
+        # Dynamic DAG: constructs soft dependencies at runtime based on
+        # pairwise influence between masked positions
+        from dllm_reason.scheduler.adaptive_dynamic_scheduler import AdaptiveDynamicScheduler
+        return AdaptiveDynamicScheduler(), None
 
     elif dag_name == "linear":
         # Left-to-right chain (no DAG object needed, scheduler handles order)
@@ -223,9 +306,22 @@ def main():
                 "model": model,
                 "scheduler": scheduler,
                 "num_steps": args.num_steps,
-                "temperature": max(args.temperature, 1e-6),
+                "block_length": args.block_length,
+                "temperature": args.temperature,
+                "cfg_scale": args.cfg_scale,
+                "remasking": args.remasking,
                 "max_new_tokens": args.max_new_tokens,
                 "num_samples": args.num_samples,
+                "run_tests": not args.no_run_tests,
+                "verbose_errors": args.verbose_errors,
+                # detailed output saving
+                "save_outputs": args.save_outputs,
+                "save_dir": output_dir,
+                "save_qa": not args.no_save_qa,
+                "save_ground_truth": not args.no_save_ground_truth,
+                "record_trajectory": args.record_trajectory,
+                "output_formats": args.output_formats,
+                "run_tag": dag_name,
             }
 
             if benchmark_name == "mmlu" and args.mmlu_subjects:
@@ -285,16 +381,17 @@ def _get_primary_metric(result: dict) -> dict:
         return {"name": "N/A", "value": 0.0}
 
     bm = result.get("benchmark", "")
-    if bm == "mbpp":
+    # Code benchmarks → pass@1
+    if bm in ("mbpp", "humaneval"):
         return {"name": "pass@1", "value": result.get("pass@1", 0.0)}
-    elif bm == "humaneval":
-        return {"name": "pass@1", "value": result.get("pass@1", 0.0)}
+    # QA benchmark → EM
     elif bm == "hotpotqa":
         return {"name": "EM", "value": result.get("exact_match", 0.0)}
-    elif bm == "mmlu":
+    # MCQ / reasoning / math benchmarks → accuracy
+    elif bm in ("mmlu", "gsm8k", "math", "arc", "prontoqa", "gpqa", "aime"):
         return {"name": "accuracy", "value": result.get("accuracy", 0.0)}
     else:
-        # Try common keys
+        # Fallback: try common keys
         for key in ["pass@1", "accuracy", "exact_match", "f1"]:
             if key in result:
                 return {"name": key, "value": result[key]}

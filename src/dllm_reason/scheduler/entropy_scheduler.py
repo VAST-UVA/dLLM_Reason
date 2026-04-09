@@ -1,4 +1,4 @@
-"""Confidence-based unmasking scheduler (LLaDA default)."""
+"""Entropy-based unmasking scheduler — unmask lowest-entropy (most certain) positions first."""
 
 from __future__ import annotations
 
@@ -8,12 +8,17 @@ from dllm_reason.scheduler.base import UnmaskingScheduler
 from dllm_reason.utils.registry import SCHEDULER_REGISTRY
 
 
-@SCHEDULER_REGISTRY.register("confidence")
-class ConfidenceScheduler(UnmaskingScheduler):
-    """Commit the n_to_select highest-confidence masked positions.
+@SCHEDULER_REGISTRY.register("entropy")
+class EntropyScheduler(UnmaskingScheduler):
+    """Commit the n_to_select positions with lowest Shannon entropy.
+
+    Unlike the confidence scheduler (which uses argmax probability),
+    this scheduler measures uncertainty via the full entropy of the
+    softmax distribution over the vocabulary.  Lower entropy means the
+    model is more certain about its prediction.
 
     If block_mask is provided, only positions inside the current block
-    are eligible — this implements LLaDA's block-wise denoising strategy.
+    are eligible.
     """
 
     def select_positions(
@@ -35,16 +40,21 @@ class ConfidenceScheduler(UnmaskingScheduler):
         if block_mask is not None:
             eligible = eligible & block_mask
 
-        # Set confidence to -inf for ineligible positions
-        conf = confidences.clone()
-        conf[~eligible] = -float("inf")
+        # Compute per-position entropy from logits: H = -sum(p * log(p + eps))
+        eps = 1e-8
+        probs = torch.softmax(logits, dim=-1)                    # (B, L, V)
+        entropy = -(probs * torch.log(probs + eps)).sum(dim=-1)  # (B, L)
+
+        # Set entropy to +inf for ineligible positions so they are never selected
+        entropy[~eligible] = float("inf")
 
         result = torch.zeros(B, L, dtype=torch.bool, device=device)
         for b in range(B):
             n = min(n_to_select, int(eligible[b].sum().item()))
             if n <= 0:
                 continue
-            _, top_idx = conf[b].topk(n)
+            # Lowest entropy → most certain; use topk on negated entropy
+            _, top_idx = (-entropy[b]).topk(n)
             result[b, top_idx] = True
 
         return result

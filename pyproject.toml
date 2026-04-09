@@ -4,8 +4,21 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dllm-reason"
-version = "0.1.0"
+version = "1.4.1"
 description = "DAG-guided discrete diffusion language models for reasoning"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "BDeMo" }]
+keywords = ["discrete diffusion", "language model", "reasoning", "DAG", "LLaDA"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 requires-python = ">=3.10"
 dependencies = [
     "torch>=2.1.0",
@@ -19,8 +32,11 @@ dependencies = [
     "matplotlib>=3.8.0",
     "numpy>=1.24.0",
     "tqdm>=4.66.0",
+    "pyyaml>=6.0",
     "einops>=0.7.0",
     "scipy>=1.11.0",
+    "openpyxl>=3.1.0",
+    "evaluate>=0.4.0",
 ]
 
 [project.optional-dependencies]
@@ -34,6 +50,11 @@ dev = [
     "pytest-cov>=4.1.0",
     "ruff>=0.1.0",
 ]
+serve = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "bitsandbytes>=0.41.0",
+]
 
 [project.scripts]
 dllm-train = "dllm_reason.cli:train"
@@ -41,9 +62,19 @@ dllm-eval = "dllm_reason.cli:evaluate"
 dllm-eval-dags = "dllm_reason.cli:eval_dags"
 dllm-search = "dllm_reason.cli:search_dag"
 dllm-viz = "dllm_reason.cli:visualize_dag"
+dllm-serve = "dllm_reason.cli:serve"
+dllm-webui = "dllm_reason.cli:webui"
+
+[project.urls]
+"Homepage" = "https://github.com/BDeMo/dLLM_Reason"
+"Bug Tracker" = "https://github.com/BDeMo/dLLM_Reason/issues"
+"Documentation" = "https://github.com/BDeMo/dLLM_Reason#readme"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"dllm_reason" = ["py.typed"]
 
 [tool.ruff]
 line-length = 100

@@ -1,0 +1,50 @@
+# Default evaluation configuration.
+# All values can be overridden by passing the corresponding --flag on the CLI.
+# CLI arguments always take priority over this file.
+
+# === Model ===
+model:
+  model_id: "checkpoints/llada-instruct"
+  torch_dtype: "bfloat16"      # bfloat16 | float16 | float32
+  device_map: "auto"
+
+# === Inference ===
+inference:
+  num_steps: 128
+  block_length: 32             # tokens per block; max_new_tokens must be divisible
+  temperature: 0.0             # 0 = greedy argmax
+  cfg_scale: 0.0               # classifier-free guidance scale; 0 = disabled
+  remasking: "low_confidence"  # low_confidence | random
+  max_new_tokens: 128
+
+# === Benchmarks ===
+benchmarks:
+  benchmarks: ["mbpp", "humaneval"]
+  num_samples: null            # null = full dataset
+  run_tests: true              # false = generate only, skip code execution
+  verbose_errors: false        # true = print per-sample error logs
+
+# === DAG / scheduler strategies ===
+dags:
+  dags: ["confidence"]
+  # choices: confidence | random | entropy | semi_ar | maskgit_cosine | critical_token_first
+  #          | curriculum | linear | cot | skeleton | bidirectional | answer_first | adaptive_dynamic
+  cot_steps: 4                 # number of reasoning segments for cot DAG
+  mmlu_subjects: null          # null = default subject subset
+
+# === Output ===
+output:
+  output_dir: "results"
+  resume: false                # skip runs whose result JSON already exists
+
+# === Detailed output saving ===
+# Master switch: --save_outputs enables writing per-sample files.
+# Individual sub-options control what is included.
+save:
+  save_outputs: false          # master switch; --save_outputs to enable
+  save_qa: true                # save prompt + generated answer per sample
+  save_ground_truth: true      # save reference/canonical answer per sample
+  record_trajectory: false     # record per-step unmasking states (large/slow)
+  output_formats:              # file formats to write
+    - "json"
+    - "xlsx"

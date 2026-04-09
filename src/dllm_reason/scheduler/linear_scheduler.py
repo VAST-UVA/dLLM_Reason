@@ -25,23 +25,21 @@ class LinearScheduler(UnmaskingScheduler):
         is_unmasked: torch.Tensor,
         logits: torch.Tensor,
         confidences: torch.Tensor,
+        block_mask: torch.Tensor | None = None,
+        n_to_select: int = 1,
     ) -> torch.Tensor:
         B, L = current_mask.shape
         device = current_mask.device
 
-        num_masked = current_mask.sum(dim=-1)
-        num_to_unmask = self._compute_num_to_unmask(step, total_steps, num_masked)
-
+        eligible = current_mask & block_mask if block_mask is not None else current_mask
         result = torch.zeros(B, L, dtype=torch.bool, device=device)
 
         for b in range(B):
-            # Find first N masked positions (leftmost)
-            masked_indices = current_mask[b].nonzero(as_tuple=False).squeeze(-1)
-            if len(masked_indices) == 0:
+            indices = eligible[b].nonzero(as_tuple=False).squeeze(-1)
+            if len(indices) == 0:
                 continue
-            n = min(num_to_unmask[b].item(), len(masked_indices))
-            # Already sorted since nonzero returns in order
-            selected = masked_indices[:n]
+            # Leftmost first
+            selected = indices[:min(n_to_select, len(indices))]
             result[b, selected] = True
 
         return result
