@@ -1,31 +1,26 @@
 """Training entry point for dLLM models.
 
-Supports pretraining from scratch and fine-tuning a pretrained model.
+Supports 4 training modes: pretrain, finetune, dag_aware, rl.
 
 Usage:
     # Pretrain MDLM on GSM8K:
-    python scripts/train.py \
-        --model mdlm \
-        --dataset gsm8k \
-        --mode pretrain \
+    dllm-train --model mdlm --dataset gsm8k --mode pretrain \
         --output_dir checkpoints/mdlm_gsm8k
 
-    # Fine-tune LLaDA on GSM8K:
-    python scripts/train.py \
-        --model llada \
-        --dataset gsm8k \
-        --mode finetune \
+    # Fine-tune LLaDA on GSM8K (answer-only loss):
+    dllm-train --model llada --dataset gsm8k --mode finetune \
         --checkpoint GSAI-ML/LLaDA-8B-Instruct \
+        --loss_on_answer_only \
         --output_dir checkpoints/llada_gsm8k_finetuned
 
-    # Train with DAG-aware masking:
-    python scripts/train.py \
-        --model mdlm \
-        --dataset gsm8k \
-        --mode pretrain \
-        --dag_aware \
-        --dag_type cot \
+    # DAG-aware training (biased masking to match inference):
+    dllm-train --model mdlm --dataset gsm8k --mode dag_aware \
+        --dag_type cot --dag_bias_strength 0.5 \
         --output_dir checkpoints/mdlm_gsm8k_dag
+
+    # RL training (DiffuGRPO):
+    dllm-train --model mdlm --dataset gsm8k --mode rl \
+        --output_dir checkpoints/mdlm_gsm8k_rl
 """
 
 import argparse
@@ -57,7 +52,7 @@ def parse_args():
 
     # Training mode
     parser.add_argument("--mode", type=str, default="pretrain",
-                        choices=["pretrain", "finetune", "rl"])
+                        choices=["pretrain", "finetune", "dag_aware", "rl"])
     parser.add_argument("--loss_on_answer_only", action="store_true",
                         help="Compute loss only on answer positions (fine-tuning)")
 
@@ -200,7 +195,7 @@ def main():
     if args.mode == "finetune":
         train_cfg.loss_on_answer_only = args.loss_on_answer_only
 
-    if args.dag_aware:
+    if args.dag_aware or args.mode == "dag_aware":
         from dllm_reason.training.dag_aware_train import DAGAwareTrainer
         dag = build_dag(args, args.max_seq_len, device)
         trainer = DAGAwareTrainer(
@@ -212,6 +207,25 @@ def main():
         print(f"DAG-aware training with {args.dag_type} DAG (bias={args.dag_bias_strength})")
     elif args.mode == "finetune":
         trainer = Finetuner(model, train_loader, val_loader, train_cfg)
+    elif args.mode == "rl":
+        from dllm_reason.training.rl_train import DiffuGRPO, RLTrainConfig
+        from dllm_reason.scheduler.confidence_scheduler import ConfidenceScheduler
+        # RL requires a reference model (frozen copy)
+        import copy
+        ref_model = copy.deepcopy(model)
+        for p in ref_model.parameters():
+            p.requires_grad = False
+        rl_cfg = RLTrainConfig(lr=args.lr, num_iterations=args.max_steps)
+        # Default reward: placeholder (user should override via config)
+        def _placeholder_reward(seq, batch):
+            return 0.0
+        trainer = DiffuGRPO(
+            model, ref_model, ConfidenceScheduler(),
+            reward_fn=_placeholder_reward,
+            train_loader=train_loader,
+            config=rl_cfg,
+        )
+        print("RL training (DiffuGRPO) — provide reward_fn via Python API for real use")
     else:
         from dllm_reason.training.pretrain import Trainer
         trainer = Trainer(model, train_loader, val_loader, train_cfg)
