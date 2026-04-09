@@ -63,11 +63,12 @@ def accuracy_fitness(
             prompt_mask = prompt_mask.to(model.device)
         target_answers = batch["answer"]
 
+        if prompt_mask is None:
+            prompt_mask = torch.zeros(prompt_ids.shape, dtype=torch.bool, device=prompt_ids.device)
         result = sampler.sample(
-            batch_size=prompt_ids.shape[0],
-            seq_len=dag.seq_len,
             prompt_ids=prompt_ids,
             prompt_mask=prompt_mask,
+            gen_length=prompt_ids.shape[1] - int(prompt_mask[0].sum().item()),
         )
 
         for i in range(result.sequences.shape[0]):

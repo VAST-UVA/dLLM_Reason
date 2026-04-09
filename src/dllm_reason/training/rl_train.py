@@ -97,9 +97,9 @@ class DiffuGRPO:
                     SamplingConfig(num_steps=cfg.num_steps, temperature=cfg.temperature, show_progress=False),
                 )
                 result = sampler.sample(
-                    batch_size=B,
                     prompt_ids=prompt_ids,
                     prompt_mask=prompt_mask,
+                    gen_length=prompt_ids.shape[1] - int(prompt_mask[0].sum().item()),
                 )
 
                 # Compute log probabilities under current and reference model
