@@ -16,6 +16,9 @@ dLLM-Reason is a research framework that enhances reasoning in discrete diffusio
 Model Layer          Scheduler Layer          DAG Layer
 (what to predict) <-> (where to unmask)  <-> (dependency structure)
 MDLM|SEDD|D3PM|LLaDA  13 schedulers          TokenDAG / SpanDAG
+
+Episode Pipeline
+  prompt → strategy → generate → evaluate → EpisodeStore → SFT / GRPO / DiFFPO
 ```
 
 ---
@@ -50,15 +53,18 @@ pip install -e ".[dev,library,serve]"
 
 After installation, the following commands are available globally:
 
-| Command | Equivalent | Description |
-|---------|-----------|-------------|
-| `dllm-eval-dags` | `python scripts/eval_dags.py` | Multi-strategy x multi-benchmark evaluation |
-| `dllm-serve` | `python scripts/serve.py` | REST API server with hot-switching strategies |
-| `dllm-train` | `python scripts/train.py` | Model training |
-| `dllm-eval` | `python scripts/evaluate.py` | Single-model evaluation |
-| `dllm-search` | `python scripts/search_dag.py` | DAG structure search |
-| `dllm-viz` | `python scripts/visualize_dag.py` | DAG visualization |
-| `dllm-webui` | `python scripts/webui.py` | Interactive Web UI dashboard |
+| Command | Script | Description |
+|---------|--------|-------------|
+| `dllm-eval-dags` | `scripts/eval_dags.py` | Multi-strategy × multi-benchmark evaluation |
+| `dllm-serve` | `scripts/serve.py` | REST API server with hot-switching strategies |
+| `dllm-train` | `scripts/train.py` | Model pretraining / fine-tuning |
+| `dllm-eval` | `scripts/evaluate.py` | Single-model evaluation |
+| `dllm-search` | `scripts/search_dag.py` | DAG structure search (static) |
+| `dllm-viz` | `scripts/visualize_dag.py` | DAG visualization |
+| `dllm-webui` | `scripts/webui.py` | Interactive Web UI dashboard |
+| — | `scripts/search_dag_live.py` | DAG search with **real-time web dashboard** |
+| — | `scripts/collect_episodes.py` | Collect (prompt, DAG, output, eval) episodes |
+| — | `scripts/learn_from_episodes.py` | Fine-tune from episodes: SFT / GRPO / DiFFPO |
 
 ---
 
@@ -188,6 +194,98 @@ Features:
 - **Trajectory**: Visualize step-by-step unmasking progression
 - **Results**: Browse and compare benchmark results (reads `results/` directory)
 
+### DAG Search with Live Web Dashboard
+
+```bash
+# Evolutionary search — opens http://localhost:8765 automatically
+python scripts/search_dag_live.py \
+    --model llada \
+    --checkpoint checkpoints/llada-instruct \
+    --dataset gsm8k \
+    --method evolutionary \       # greedy | evolutionary | rl_policy | differentiable
+    --budget 100 \
+    --fitness accuracy \          # accuracy | perplexity | combined
+    --seq_len 256 \
+    --port 8765
+
+# Seed population from templates (new)
+python scripts/search_dag_live.py --method evolutionary \
+    --init_templates              # default set: cot skeleton bidirectional answer_first empty
+
+python scripts/search_dag_live.py --method evolutionary \
+    --init_templates cot skeleton bidirectional answer_first
+
+# Greedy warm-start: evaluate all templates, start from best
+python scripts/search_dag_live.py --method greedy \
+    --init_templates cot skeleton answer_first
+
+# 9 available template names:
+# cot  skeleton  bidirectional  answer_first  interleaved
+# linear  empty  random_low  random_high
+```
+
+### Episode Collection
+
+Collect `(prompt, strategy, output, evaluation)` records into a persistent SQLite store.
+
+```bash
+# Single prompt
+python scripts/collect_episodes.py \
+    --model_id checkpoints/llada-instruct \
+    --prompt "What is 12 * 15?" \
+    --ground_truth "180" \
+    --task_type math \
+    --strategy cot confidence \   # collect for BOTH strategies in one run
+    --db_path episodes/gsm8k.db
+
+# Dataset (JSONL)
+python scripts/collect_episodes.py \
+    --dataset_path data/gsm8k_test.jsonl \
+    --prompt_field problem --answer_field answer \
+    --n_samples 500 \
+    --strategy confidence cot adaptive_dynamic \
+    --eval_mode auto              # auto | manual | none
+```
+
+### Learning from Episodes
+
+Fine-tune the model on stored episodes.
+
+```bash
+# Print stats only
+python scripts/learn_from_episodes.py --db_path episodes/gsm8k.db \
+    --model_id none --mode stats
+
+# SFT on correct episodes
+python scripts/learn_from_episodes.py \
+    --db_path episodes/gsm8k.db \
+    --model_id checkpoints/llada-instruct \
+    --mode sft --task_type math --dag_aware \
+    --epochs 3 --lr 1e-5 \
+    --output_dir checkpoints/sft-math
+
+# GRPO (group relative policy optimisation)
+python scripts/learn_from_episodes.py \
+    --mode grpo --kl_coeff 0.01 \
+    --output_dir checkpoints/grpo-math
+
+# DiFFPO — PPO with importance-ratio clipping + joint sampler training
+# Reference: Zhao et al. 2024  https://arxiv.org/abs/2510.02212
+python scripts/learn_from_episodes.py \
+    --mode diffppo \
+    --ppo_clip_eps 0.2 \
+    --train_sampler \             # jointly train adaptive step-budget controller
+    --min_steps 8 --max_steps 128 \
+    --step_budget_lambda 0.1 \
+    --output_dir checkpoints/diffppo-math
+```
+
+| Mode | Data used | Algorithm | Best for |
+|------|-----------|-----------|----------|
+| `sft` | correct only | Cross-entropy | Fast, clean data |
+| `grpo` | all evaluated | GRPO group advantage | Contrastive (correct vs wrong) |
+| `diffppo` | all evaluated | PPO clip + step controller | Accuracy + inference speed Pareto |
+
 ### LaTeX Table Generation
 
 ```bash
@@ -266,21 +364,25 @@ dags:
 ```
 src/dllm_reason/
   models/          MDLM, SEDD, D3PM, LLaDA (4 dLLMs)
-  graph/           TokenDAG, SpanDAG, 6 templates, constraints, visualization
+  graph/           TokenDAG, SpanDAG, 9 templates + registry, constraints, visualization
   scheduler/       13 unmasking strategies (8 flat + 4 DAG + 1 adaptive dynamic)
   search/          Evolutionary, Greedy, RL Policy, NOTEARS, E2E DAG, NAS (6 search methods)
   inference/       DiffusionSampler (auto-pad, early-stop), DAGSampler
-  training/        Pretrain, DAG-aware, Fine-tune, Diffu-GRPO
+  training/        Pretrain, DAG-aware, Fine-tune, DiffuGRPO, DiFFPO
   eval/            10 benchmark evaluators, metrics, DAG analysis
-  library/         DAG Library (store, retrieval, fusion, feedback, merge)
+  library/         DAGEntry + DAGStore (retrieval/fusion/feedback/merge)
+                   DAGEpisode + EpisodeStore  ← episode pipeline
   data/            Dataset loaders (GSM8K, MATH, ARC, ProntoQA, ...)
   utils/           Registry, logging, distributed
 
 configs/           31 YAML configs (model, graph, search, task, eval, experiment, library)
-scripts/           8 Python scripts + 16 shell run scripts
+scripts/           serve.py  search_dag_live.py  collect_episodes.py
+                   learn_from_episodes.py  + eval / train / viz scripts
+                   runs/  16 shell convenience scripts
 tests/             DAG, schedulers, models, library (4 test suites)
 notebooks/         DAG exploration, results analysis
-docs/              Version history, API reference, deployment guide, tutorial, references
+docs/              API_REFERENCE.md  REFERENCES.md  deployment.md  tutorial  V1.0_RELEASE.md
+REFERENCES.md      All cited papers (root-level, kept in sync with docs/)
 ```
 
 ---
@@ -298,7 +400,16 @@ dag = TokenDAG.linear_chain(seq_len=256)
 ready = dag.ready_positions(is_unmasked)  # one batched GPU op
 ```
 
-6 templates: Chain-of-Thought, Answer-First, Skeleton-Detail, Bidirectional, Interleaved, Random.
+**9 named templates** accessible via unified registry:
+
+```python
+from dllm_reason.graph.templates import build_all_templates, build_template, TEMPLATE_NAMES
+# TEMPLATE_NAMES = ['cot','answer_first','skeleton','bidirectional',
+#                   'interleaved','linear','empty','random_low','random_high']
+
+templates = build_all_templates(seq_len=128, device="cuda")
+dag = build_template("cot", seq_len=128)
+```
 
 ### SpanDAG
 
@@ -334,10 +445,19 @@ scheduler = AdaptiveDynamicScheduler(influence_threshold=0.3, momentum=0.5)
 Automatically discover optimal DAG structures.
 
 ```python
-# Evolutionary search
+# Evolutionary search — templates seed the initial population automatically
 from dllm_reason.search.evolutionary import EvolutionarySearch
-searcher = EvolutionarySearch(population_size=20, library=dag_store)
+searcher = EvolutionarySearch(
+    population_size=20,
+    init_templates=["cot", "skeleton", "bidirectional"],  # None = default set
+    library=dag_store,
+)
 result = searcher.search(model, eval_fn, seq_len=256, budget=200)
+
+# Greedy search — warm-start from the best template
+from dllm_reason.search.greedy import GreedyEdgeSearch
+searcher = GreedyEdgeSearch(init_templates=["cot", "skeleton", "answer_first"])
+result = searcher.search(model, eval_fn, seq_len=256, budget=100)
 
 # End-to-end DAG learning (differentiable, jointly with task loss)
 from dllm_reason.search.e2e_dag_learner import E2EDAGLearner, E2EConfig
@@ -363,13 +483,46 @@ result = searcher.search(model, eval_fn, seq_len=256, budget=200)
 
 Persistent storage + retrieval + feedback for DAG structures.
 
-- **Store**: SQLite + FAISS vector index
+- **DAGStore**: SQLite + FAISS vector index for `DAGEntry` records
 - **Retrieval**: 3 channels (semantic, structural, performance)
 - **Fusion**: 4 strategies (weighted, RRF, max, voting)
 - **Feedback**: 3 sources (auto benchmark, human rating, Elo tournament)
 - **Merge**: 3 strategies (union, intersection, weighted)
 
 All components independently toggleable for ablation. 7 preset configs in `configs/library/`.
+
+### Episode Pipeline
+
+Full loop: collect interaction records → store → learn from them.
+
+```python
+from dllm_reason.library.episode import DAGEpisode, EpisodeStore
+
+store = EpisodeStore("episodes/gsm8k.db")
+ep = DAGEpisode(prompt="...", task_type="math", strategy_name="cot",
+                output="...", ground_truth="42")
+store.add(ep)
+store.update_eval(ep.episode_id, correct=True, score=1.0)
+
+# Paginated training iterator (memory-safe)
+for ep in store.iter_for_training(task_type="math", correct_only=True):
+    ...
+
+store.print_stats()
+```
+
+Scripts: `collect_episodes.py` → `learn_from_episodes.py` (modes: `sft` / `grpo` / `diffppo`)
+
+### RL Training
+
+Three algorithms in `src/dllm_reason/training/rl_train.py`:
+
+| Class | Algorithm | Key feature |
+|-------|-----------|-------------|
+| `DiffuGRPO` | GRPO | Group-relative advantage, no importance weights |
+| `DiFFPO` | PPO + joint sampler | Importance-ratio clipping + `StepBudgetController` |
+
+`DiFFPO` (Zhao et al. 2024, [arXiv:2510.02212](https://arxiv.org/abs/2510.02212)) jointly trains a lightweight MLP controller that predicts the optimal number of denoising steps per prompt, improving the accuracy–compute Pareto frontier.
 
 ---
 
@@ -406,7 +559,7 @@ All configs use YAML + Hydra/OmegaConf.
 - **[Tutorial: pip install + all-strategies evaluation](docs/tutorial_eval_all_strategies.md)**
 - **[Deployment Guide: REST API, Docker, quantization](docs/deployment.md)**
 - **[API Reference](docs/API_REFERENCE.md)**
-- **[References: paper citations for all components](docs/REFERENCES.md)**
+- **[References: all cited papers](docs/REFERENCES.md)** · also at [REFERENCES.md](REFERENCES.md)
 - **[Version History](docs/V1.0_RELEASE.md)**
 
 ---
