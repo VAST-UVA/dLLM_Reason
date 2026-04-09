@@ -85,8 +85,12 @@ class DAGSampler:
                 # Refinement step: re-predict all positions but don't change unmasking
                 continue
 
-            # Model prediction (no timestep — LLaDA infers noise from masked positions)
-            output = self.model.forward(x_t)
+            # Timestep: 1.0 (fully masked) → 0.0 (clean)
+            t_val = 1.0 - step / max(cfg.num_steps, 1)
+            t = torch.full((batch_size,), t_val, device=device, dtype=torch.float32)
+
+            # Model prediction
+            output = self.model.forward(x_t, t)
             logits = output.logits / max(cfg.temperature, 1e-6)
             probs = torch.softmax(logits, dim=-1)
 
@@ -121,8 +125,9 @@ class DAGSampler:
                 trajectory.append(x_t.clone())
 
         # Refinement: re-predict and resample uncertain positions
+        t_refine = torch.zeros(batch_size, device=device, dtype=torch.float32)
         for _ in range(cfg.refinement_steps):
-            output = self.model.forward(x_t)
+            output = self.model.forward(x_t, t_refine)
             probs = torch.softmax(output.logits / max(cfg.temperature, 1e-6), dim=-1)
             confidences = probs.max(dim=-1).values
 
@@ -139,7 +144,8 @@ class DAGSampler:
         # Final cleanup: force-fill remaining mask tokens with argmax
         remaining = (x_t == self.model.mask_token_id) & ~prompt_mask
         if remaining.any():
-            output = self.model.forward(x_t)
+            t_zero = torch.zeros(batch_size, device=device, dtype=torch.float32)
+            output = self.model.forward(x_t, t_zero)
             final_logits = output.logits.clone()
             final_logits[..., self.model.mask_token_id] = -float("inf")
             x_t = torch.where(remaining, final_logits.argmax(dim=-1), x_t)
