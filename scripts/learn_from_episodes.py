@@ -1,18 +1,24 @@
-"""Learn from stored episodes: SFT, GRPO, or DiFFPO on the EpisodeStore.
+"""Learn from stored episodes: SFT, GRPO, DiFFPO, or UnmaskRL.
 
-Three learning modes
---------------------
-sft     — Supervised fine-tuning on *correct* episodes.
-          (prompt, correct_output) pairs via standard cross-entropy loss.
+Four learning modes
+-------------------
+sft       — Supervised fine-tuning on *correct* episodes.
+            (prompt, correct_output) pairs via standard cross-entropy loss.
 
-grpo    — Group Relative Policy Optimization (DiffuGRPO).
-          Reward = +1 for correct, -1 for wrong. Groups are built by
-          clustering all episodes with the same prompt.
+grpo      — Group Relative Policy Optimization (DiffuGRPO).
+            Reward = +1 for correct, -1 for wrong. Groups are built by
+            clustering all episodes with the same prompt.
 
-diffppo — Diffusion Fast and Furious Policy Optimization.
-          PPO-style RL with importance-ratio clipping + joint sampler
-          training (adaptive step budget per prompt).
-          Reference: Zhao et al. 2024 https://arxiv.org/abs/2510.02212
+diffppo   — Diffusion Fast and Furious Policy Optimization.
+            PPO-style RL with importance-ratio clipping + joint sampler
+            training (adaptive step budget per prompt).
+            Reference: Zhao et al. 2024 https://arxiv.org/abs/2510.02212
+
+unmask_rl — RL-trained unmasking policy (process-level RL).
+            Trains a lightweight single-layer transformer policy that
+            decides which tokens to unmask at each diffusion step.
+            The LM weights are kept **frozen**; only the policy net trains.
+            Reference: Jazbec et al. 2025 https://arxiv.org/abs/2512.09106
 
 All modes support DAG-aware training when episodes contain a DAG.
 
@@ -43,6 +49,15 @@ python scripts/learn_from_episodes.py \\
     --train_sampler \\
     --min_steps 8 --max_steps 128 \\
     --output_dir checkpoints/llada-diffppo-math
+
+# UnmaskRL: train unmasking policy, keep LM frozen
+python scripts/learn_from_episodes.py \\
+    --db_path episodes/gsm8k.db \\
+    --model_id checkpoints/llada-instruct \\
+    --mode unmask_rl \\
+    --unmask_group_size 4 \\
+    --unmask_num_steps 32 \\
+    --output_dir checkpoints/llada-unmask-policy
 
 # Dry-run: print dataset stats then exit
 python scripts/learn_from_episodes.py \\
@@ -446,6 +461,68 @@ def run_diffppo(
     _save_model(model, tokenizer, args.output_dir)
 
 
+# ── UnmaskRL training loop ────────────────────────────────────────────────────
+
+def run_unmask_rl(
+    model,
+    tokenizer,
+    episodes: list[DAGEpisode],
+    args: argparse.Namespace,
+) -> None:
+    """Train an unmasking policy via process-level REINFORCE.
+
+    The LM weights are frozen; only the lightweight transformer policy is
+    updated.  Best for improving inference quality without modifying the LM.
+
+    Reference: Jazbec et al. 2025  https://arxiv.org/abs/2512.09106
+    """
+    from dllm_reason.training.rl_train import (
+        UnmaskingPolicyRL,
+        UnmaskingPolicyConfig,
+    )
+
+    dataset = GRPOEpisodeDataset(episodes, tokenizer, max_prompt_length=args.max_length)
+    loader  = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=0)
+
+    def reward_fn(seq_ids: torch.Tensor, batch: dict) -> float:
+        group: list[DAGEpisode] = batch["episodes"][0]
+        return sum(ep.reward for ep in group) / max(len(group), 1)
+
+    cfg = UnmaskingPolicyConfig(
+        lr             = args.lr,
+        num_iterations = args.epochs * len(loader),
+        group_size     = args.unmask_group_size,
+        num_steps      = args.unmask_num_steps,
+        max_grad_norm  = 1.0,
+        log_every      = args.log_every,
+        policy_d_model = args.unmask_d_model,
+        policy_n_heads = args.unmask_n_heads,
+    )
+
+    trainer = UnmaskingPolicyRL(
+        model        = model,
+        reward_fn    = reward_fn,
+        train_loader = loader,
+        config       = cfg,
+    )
+
+    print(
+        f"\nRunning UnmaskRL for {cfg.num_iterations} iterations "
+        f"(group_size={cfg.group_size}, steps={cfg.num_steps}, "
+        f"d_model={cfg.policy_d_model}) ..."
+    )
+    trainer.train()
+
+    # Save policy weights alongside the (unchanged) LM
+    import os
+    out = args.output_dir
+    os.makedirs(out, exist_ok=True)
+    policy_path = os.path.join(out, "unmask_policy.pt")
+    trainer.save_policy(policy_path)
+    # Also save the original LM so the output dir is self-contained
+    _save_model(model, tokenizer, out)
+
+
 # ── DAG helpers for training ──────────────────────────────────────────────────
 
 def _build_aggregate_dag(
@@ -548,8 +625,14 @@ def parse_args() -> argparse.Namespace:
 
     # Training mode
     parser.add_argument("--mode", default="sft",
-                        choices=["sft", "grpo", "diffppo", "stats"],
-                        help="sft: supervised, grpo: GRPO RL, diffppo: DiFFPO RL, stats: info only")
+                        choices=["sft", "grpo", "diffppo", "unmask_rl", "stats"],
+                        help=(
+                            "sft: supervised fine-tuning, "
+                            "grpo: DiffuGRPO, "
+                            "diffppo: DiFFPO (PPO + joint sampler), "
+                            "unmask_rl: learned unmasking policy (LM frozen), "
+                            "stats: info only"
+                        ))
     parser.add_argument("--dag_aware", action="store_true",
                         help="Use DAG-biased masking during training")
 
@@ -575,6 +658,16 @@ def parse_args() -> argparse.Namespace:
                         help="DiFFPO: maximum denoising steps for controller")
     parser.add_argument("--step_budget_lambda", type=float, default=0.1,
                         help="DiFFPO: weight of step-efficiency loss")
+
+    # UnmaskRL-specific
+    parser.add_argument("--unmask_group_size", type=int, default=4,
+                        help="UnmaskRL: REINFORCE rollouts per prompt (group size)")
+    parser.add_argument("--unmask_num_steps", type=int, default=32,
+                        help="UnmaskRL: diffusion steps per rollout")
+    parser.add_argument("--unmask_d_model", type=int, default=64,
+                        help="UnmaskRL: policy transformer d_model")
+    parser.add_argument("--unmask_n_heads", type=int, default=4,
+                        help="UnmaskRL: policy transformer attention heads")
 
     # Output
     parser.add_argument("--output_dir", default="checkpoints/finetuned",
@@ -664,6 +757,10 @@ def main():
         ref_model.eval()
 
         run_diffppo(model, ref_model, tokenizer, episodes, args)
+
+    elif args.mode == "unmask_rl":
+        print(f"\nRunning UnmaskRL (Jazbec et al. 2025) — LM frozen, training policy ...")
+        run_unmask_rl(model, tokenizer, episodes, args)
 
 
 if __name__ == "__main__":

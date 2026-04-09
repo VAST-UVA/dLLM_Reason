@@ -63,6 +63,7 @@ All baselines, benchmarks, search methods, and RL algorithms used in dLLM-Reason
 |--------|-------------|-----------|
 | `DiffuGRPO` | Group Relative Policy Optimization adapted for dLLMs; group-relative advantage, no importance weights | d1 — Scaling Reasoning in Diffusion LLMs. [[GitHub]](https://github.com/dllm-reasoning/d1) |
 | `DiFFPO` | PPO with importance-ratio clipping + joint sampler training (`StepBudgetController` predicts adaptive step budget per prompt) | Zhao, Liang, Tang, Yao, Kallus. "Training Diffusion LLMs to Reason Fast and Furious via Reinforcement Learning", 2024. [[arXiv:2510.02212]](https://arxiv.org/abs/2510.02212) |
+| `UnmaskingPolicyRL` | Process-level RL: lightweight transformer policy (`UnmaskingPolicyNet`) decides which tokens to unmask at each step via REINFORCE; LM weights frozen | Jazbec, Olausson, Béthune, Ablin, Kirchhof, Monteiro, Turrisi, Ramapuram, Cuturi. "Learning Unmasking Policies for Diffusion Language Models", 2025. [[arXiv:2512.09106]](https://arxiv.org/abs/2512.09106) |
 
 ---
 

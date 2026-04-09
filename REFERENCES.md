@@ -21,10 +21,15 @@ Papers and codebases this project builds on or is directly inspired by.
 |---|---|
 | **d1** — Scaling Reasoning in Diffusion Large Language Models. 2024. [GitHub](https://github.com/dllm-reasoning/d1) | `training/rl_train.py` — DiffuGRPO base design |
 | **DiFFPO** — Training Diffusion LLMs to Reason Fast and Furious via Reinforcement Learning. Zhao, Liang, Tang, Yao, Kallus, 2024. [arXiv:2510.02212](https://arxiv.org/abs/2510.02212) | `training/rl_train.py` — `DiFFPO` class; `scripts/learn_from_episodes.py` `--mode diffppo` |
+| **UnmaskPolicy** — Learning Unmasking Policies for Diffusion Language Models. Jazbec, Olausson, Béthune, Ablin, Kirchhof, Monteiro, Turrisi, Ramapuram, Cuturi, 2025. [arXiv:2512.09106](https://arxiv.org/abs/2512.09106) | `training/rl_train.py` — `UnmaskingPolicyNet`, `UnmaskingPolicyRL`; `scripts/learn_from_episodes.py` `--mode unmask_rl` |
 
 **DiFFPO** introduces two innovations adopted here:
 1. **Surrogate-policy PPO** — off-policy RL with importance-ratio clipping (`ppo_clip_eps`), replacing plain policy gradient.
 2. **Joint sampler–model training** — `StepBudgetController` predicts the optimal denoising step budget per prompt, improving the inference-time compute Pareto frontier.
+
+**UnmaskPolicy** introduces process-level RL for dLLMs:
+1. **MDP formulation** — masked diffusion sampling as a Markov Decision Process; state = per-token confidence, action = binary unmask vector.
+2. **Frozen LM, trainable policy** — a lightweight single-layer transformer policy (`UnmaskingPolicyNet`) is trained via REINFORCE; LM weights are untouched.
 
 ---
 
