@@ -276,7 +276,7 @@ python scripts/search_dag_live.py \
 
 # Seed population from templates (new)
 python scripts/search_dag_live.py --method evolutionary \
-    --init_templates              # default set: cot skeleton bidirectional answer_first empty
+    --init_templates              # default set: cot skeleton bidirectional answer_first
 
 python scripts/search_dag_live.py --method evolutionary \
     --init_templates cot skeleton bidirectional answer_first
@@ -285,9 +285,9 @@ python scripts/search_dag_live.py --method evolutionary \
 python scripts/search_dag_live.py --method greedy \
     --init_templates cot skeleton answer_first
 
-# 9 available template names:
+# 8 available template names:
 # cot  skeleton  bidirectional  answer_first  interleaved
-# linear  empty  random_low  random_high
+# linear  random_low  random_high
 ```
 
 ### Episode Collection
@@ -466,12 +466,12 @@ dag = TokenDAG.linear_chain(seq_len=256)
 ready = dag.ready_positions(is_unmasked)  # one batched GPU op
 ```
 
-**9 named templates** accessible via unified registry:
+**8 named templates** accessible via unified registry:
 
 ```python
 from dllm_reason.graph.templates import build_all_templates, build_template, TEMPLATE_NAMES
 # TEMPLATE_NAMES = ['cot','answer_first','skeleton','bidirectional',
-#                   'interleaved','linear','empty','random_low','random_high']
+#                   'interleaved','linear','random_low','random_high']
 
 templates = build_all_templates(seq_len=128, device="cuda")
 dag = build_template("cot", seq_len=128)

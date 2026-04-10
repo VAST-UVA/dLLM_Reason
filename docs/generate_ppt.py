@@ -233,7 +233,7 @@ items = [
     "Boolean adjacency matrix (seq_len x seq_len) on GPU",
     "Edge (i, j) = \"position i must unmask before j\"",
     "ready_positions(): single batched matrix operation",
-    "Constructors: empty(), linear_chain(), from_edges(), from_levels()",
+    "Constructors: no_edges(), linear_chain(), from_edges(), from_levels()",
     "Mutations: add_edges(), remove_edges(), mutate()",
     "Analysis: topological_levels(), depth(), transitive_closure()",
     "Validation: is_valid() checks acyclicity",

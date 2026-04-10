@@ -6,8 +6,8 @@ from dllm_reason.graph.dag import TokenDAG
 from dllm_reason.graph.templates import chain_of_thought_dag, bidirectional_dag
 
 
-def test_empty_dag():
-    dag = TokenDAG.empty(10)
+def test_no_edges_dag():
+    dag = TokenDAG.no_edges(10)
     assert dag.seq_len == 10
     assert dag.num_edges() == 0
     assert dag.is_valid()
@@ -96,7 +96,7 @@ def test_mask_schedule():
 
 
 def test_dag_add_remove_edges():
-    dag = TokenDAG.empty(5)
+    dag = TokenDAG.no_edges(5)
     dag2 = dag.add_edges([(0, 1), (1, 2)])
     assert dag2.num_edges() == 2
     assert dag2.is_valid()

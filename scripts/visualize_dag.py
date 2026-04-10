@@ -59,7 +59,6 @@ def build_all_template_dags(seq_len: int, cot_steps: int):
     )
 
     dags = {
-        "Empty (Random)": TokenDAG.empty(seq_len),
         "Linear Chain": TokenDAG.linear_chain(seq_len),
         f"CoT ({cot_steps} steps)": chain_of_thought_dag(seq_len, cot_steps),
         "Skeleton-then-Detail": skeleton_then_detail_dag(

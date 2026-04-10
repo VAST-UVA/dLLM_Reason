@@ -133,9 +133,11 @@ def build_scheduler(strategy: str, gen_len: int, block_length: int, device):
         "curriculum":           CurriculumScheduler,
         "adaptive_dynamic":     AdaptiveDynamicScheduler,
     }
+    # `semi_ar` needs the current block_length, so it's constructed directly
+    # (previously its branch was unreachable — bug C19).
+    if strategy == "semi_ar":
+        return SemiAutoregressiveScheduler(block_size=block_length)
     if strategy in flat_schedulers:
-        if strategy == "semi_ar":
-            return SemiAutoregressiveScheduler(block_size=block_length)
         return flat_schedulers[strategy]()
 
     # DAG-based strategies

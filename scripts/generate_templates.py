@@ -12,7 +12,6 @@ Available templates
   bidirectional   Unmask from both ends toward center
   interleaved     Alternating reasoning / answer tokens
   linear          Strict left-to-right (autoregressive simulation)
-  empty           No edges — fully parallel unmasking
   random_low      Random sparse DAG (~5 % density)
   random_high     Random dense DAG (~20 % density)
 

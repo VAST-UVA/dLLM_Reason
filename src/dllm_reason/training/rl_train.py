@@ -402,8 +402,12 @@ class DiFFPO:
                 prompt_emb = self._embed_prompt(prompt_ids)
                 controller = self._get_or_build_controller(prompt_emb.shape[-1])
                 ctrl_log_probs = controller(prompt_emb.detach())  # (B, K)
-                # Pick the step budget with highest probability for inference
-                budget_indices = ctrl_log_probs.argmax(dim=-1)    # (B,)
+                # Sample from the policy distribution — REINFORCE requires
+                # stochastic actions; argmax makes the policy deterministic
+                # and zeros out exploration (bug C10).
+                probs = ctrl_log_probs.exp()
+                dist = torch.distributions.Categorical(probs=probs)
+                budget_indices = dist.sample()                     # (B,)
                 step_candidates = self._step_candidates.to(device)
                 num_steps_batch = step_candidates[budget_indices]  # (B,)
                 # Use per-sample step budget (take sample 0 for simplicity
@@ -474,11 +478,14 @@ class DiFFPO:
                     torch.arange(B, device=device), budget_indices
                 ]  # (B,)
                 step_frac = num_steps_batch.float() / cfg.max_steps
+                # step_budget_lambda is applied exactly once — inside ctrl_loss.
+                # Previously it was multiplied again in the total_loss addition,
+                # producing λ² on the step-penalty term (bug C9).
                 ctrl_loss = (
                     -(mean_reward_this * selected_lp).mean()
                     + cfg.step_budget_lambda * step_frac.mean()
                 )
-                total_loss = total_loss + cfg.step_budget_lambda * ctrl_loss
+                total_loss = total_loss + ctrl_loss
 
             # ── Optimiser step ────────────────────────────────────────
             self.optimizer.zero_grad()

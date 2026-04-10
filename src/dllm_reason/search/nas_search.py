@@ -179,8 +179,15 @@ class DAGController(nn.Module):
                 prev_dec = decisions[-1].float().unsqueeze(-1)
 
             # Combine inputs: (batch, 1, 3)
+            # Previously the second term was `src_emb_exp[:, 1:]` which threw
+            # away the destination embedding entirely (bug C13). We now feed
+            # one scalar from src and one scalar from dst so the GRU can
+            # distinguish edges with the same source.
             src_emb_exp = src_emb.expand(batch_size, -1)  # (batch, 2)
-            inp = torch.cat([src_emb_exp[:, :1], src_emb_exp[:, 1:], prev_dec], dim=-1)
+            dst_emb_exp = dst_emb.expand(batch_size, -1)  # (batch, 2)
+            inp = torch.cat(
+                [src_emb_exp[:, :1], dst_emb_exp[:, :1], prev_dec], dim=-1,
+            )
             inp = inp.unsqueeze(1)  # (batch, 1, 3)
 
             out, h = self.gru(inp, h)
@@ -230,8 +237,8 @@ class DAGController(nn.Module):
             if sdag.is_valid():
                 dags.append(sdag.to_token_dag())
             else:
-                # Fallback: empty DAG
-                dags.append(TokenDAG.empty(self.num_spans * span_size))
+                # Fallback: no-edges DAG
+                dags.append(TokenDAG.no_edges(self.num_spans * span_size))
 
         return dags
 
@@ -394,7 +401,7 @@ class NASDAGSearch(DAGSearcher):
         optimizer = torch.optim.Adam(controller.parameters(), lr=cfg.lr_controller)
 
         baseline = 0.0  # EMA baseline for REINFORCE
-        best_dag = TokenDAG.empty(num_spans * span_size)
+        best_dag = TokenDAG.no_edges(num_spans * span_size)
         best_fitness = eval_fn(model, best_dag)
         history = [{"fitness": best_fitness, "step": 0}]
 

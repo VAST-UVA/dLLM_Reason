@@ -139,7 +139,7 @@ class RLPolicySearch(DAGSearcher):
         device = model.device
         self.policy = self.policy.to(device)
 
-        best_dag = TokenDAG.empty(seq_len, device=device)
+        best_dag = TokenDAG.no_edges(seq_len, device=device)
         best_fitness = eval_fn(model, best_dag)
         history = [{"fitness": best_fitness, "step": 0}]
 

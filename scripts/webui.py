@@ -240,9 +240,23 @@ def list_results():
 
 @app.get("/api/results/{path:path}")
 def get_result(path: str):
-    """Read a specific result file."""
-    result_path = Path("results") / path
-    if not result_path.exists():
+    """Read a specific result file.
+
+    Security: the requested path must resolve inside the ``results``
+    directory. Any attempt to escape it via ``..`` or absolute paths is
+    rejected (bug C15 — path-traversal).
+    """
+    results_root = Path("results").resolve()
+    try:
+        result_path = (results_root / path).resolve()
+    except (OSError, ValueError):
+        raise HTTPException(400, "Invalid path")
+    # Ensure the resolved path is inside results_root
+    try:
+        result_path.relative_to(results_root)
+    except ValueError:
+        raise HTTPException(403, "Forbidden")
+    if not result_path.exists() or not result_path.is_file():
         raise HTTPException(404, f"Not found: {path}")
     with open(result_path) as f:
         return json.load(f)
@@ -543,9 +557,11 @@ async function doCompare() {
       })
     });
     const data = await resp.json();
+    // Escape all user / model generated fields to prevent HTML injection
+    // from prompts or model outputs rendering executable markup (bug C14).
     container.innerHTML = data.results.map(r =>
-      '<div class="compare-item"><h4>' + r.strategy + '</h4>' +
-      '<div class="output">' + (r.text || r.error || 'No output') + '</div>' +
+      '<div class="compare-item"><h4>' + escapeHtml(String(r.strategy || '')) + '</h4>' +
+      '<div class="output">' + escapeHtml(String(r.text || r.error || 'No output')) + '</div>' +
       '<div class="meta">' + (r.elapsed_seconds || 0) + 's | ' +
       (r.num_tokens || 0) + ' tokens</div></div>'
     ).join('');

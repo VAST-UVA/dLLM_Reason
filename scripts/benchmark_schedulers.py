@@ -239,14 +239,16 @@ def main() -> None:
         json.dump({"args": vars(args), "results": results}, f, indent=2)
     print(f"Results saved → {json_path}")
 
-    # Save CSV
+    # Save CSV — previously guarded by `if args.save_csv or True:` which
+    # was an always-true debug leftover that broke `--no-save_csv` opt-out
+    # (bug C16). CSV is now always written to the default path when
+    # `--save_csv` is not set.
     csv_path = Path(args.save_csv) if args.save_csv else out_dir / f"benchmark_{args.dataset}.csv"
-    if args.save_csv or True:
-        with open(csv_path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=results[0].keys())
-            writer.writeheader()
-            writer.writerows(results)
-        print(f"CSV saved      → {csv_path}")
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=results[0].keys())
+        writer.writeheader()
+        writer.writerows(results)
+    print(f"CSV saved      → {csv_path}")
 
 
 if __name__ == "__main__":

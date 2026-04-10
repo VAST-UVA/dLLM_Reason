@@ -59,7 +59,7 @@ class EvolutionarySearch(DAGSearcher):
                              default set; pass ``[]`` to disable templates entirely
                              (population filled with random DAGs only).
                              Default set: ["cot", "skeleton", "bidirectional",
-                             "answer_first", "empty"].
+                             "answer_first"].
         """
         self.population_size = population_size
         self.elite_fraction = elite_fraction
@@ -153,7 +153,7 @@ class EvolutionarySearch(DAGSearcher):
         return result
 
     # Default templates used when init_templates=None
-    _DEFAULT_TEMPLATES = ["cot", "skeleton", "bidirectional", "answer_first", "empty"]
+    _DEFAULT_TEMPLATES = ["cot", "skeleton", "bidirectional", "answer_first"]
 
     def _init_population(self, seq_len: int, device) -> list[TokenDAG]:
         """Initialize population: explicit seeds → library → templates → random.

@@ -1,6 +1,6 @@
 """Greedy edge search for DAG structure optimization.
 
-Starts from an initial DAG (empty or template) and greedily adds/removes
+Starts from an initial DAG (no_edges or template) and greedily adds/removes
 edges that improve the fitness function.
 
 Supports optional DAG Library integration for initialization and writeback.
@@ -105,7 +105,7 @@ class GreedyEdgeSearch(DAGSearcher):
                 f"({current_dag.num_edges()} edges), used {n}/{budget} budget"
             )
         else:
-            current_dag = TokenDAG.empty(seq_len, device=model.device)
+            current_dag = TokenDAG.no_edges(seq_len, device=model.device)
             current_fitness = eval_fn(model, current_dag)
             evals_done += 1
 

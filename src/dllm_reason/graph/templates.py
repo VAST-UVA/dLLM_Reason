@@ -20,7 +20,6 @@ Available template names
     "bidirectional" bidirectional_dag       — outside-in unmasking
     "interleaved"  interleaved_dag          — alternating groups
     "linear"       TokenDAG.linear_chain    — strict left-to-right AR
-    "empty"        TokenDAG.empty           — no edges (parallel)
     "random_low"   random_dag(density=0.05) — sparse random
     "random_high"  random_dag(density=0.15) — denser random
 """
@@ -229,15 +228,6 @@ def linear_chain_dag(
     return TokenDAG.linear_chain(seq_len, device=device)
 
 
-def empty_dag(
-    seq_len: int,
-    prompt_len: int = 0,
-    device: torch.device | str = "cpu",
-) -> TokenDAG:
-    """No edges — all generation positions are independent (MaskGIT-style)."""
-    return TokenDAG.empty(seq_len, device=device)
-
-
 def interleaved_dag(
     seq_len: int,
     num_groups: int = 2,
@@ -287,7 +277,6 @@ _TEMPLATE_BUILDERS: dict[str, callable] = {
     "bidirectional": lambda n, d: bidirectional_dag(n, num_segments=4, device=d),
     "interleaved":   lambda n, d: interleaved_dag(n, num_groups=2, device=d),
     "linear":        lambda n, d: linear_chain_dag(n, device=d),
-    "empty":         lambda n, d: empty_dag(n, device=d),
     "random_low":    lambda n, d: random_dag(n, density=0.05, device=d),
     "random_high":   lambda n, d: random_dag(n, density=0.15, device=d),
 }

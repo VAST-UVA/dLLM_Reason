@@ -378,7 +378,7 @@ def parse_args():
     p.add_argument("--mutation_rate", type=float, default=0.3)
 
     p.add_argument("--init_dag", default=None,
-                   choices=["empty", "cot", "skeleton", "linear",
+                   choices=["cot", "skeleton", "linear",
                             "bidirectional", "answer_first", "interleaved",
                             "random_low", "random_high"],
                    help="Single explicit seed DAG (legacy; superseded by --init_templates)")
@@ -393,7 +393,7 @@ def parse_args():
             "For evolutionary: added to initial population.  "
             "For greedy: evaluated first, best one chosen as start.  "
             "Available: cot skeleton bidirectional answer_first interleaved "
-            "linear empty random_low random_high.  "
+            "linear random_low random_high.  "
             "Pass with no names (--init_templates) to use the default set, "
             "or list specific names.  "
             "Overrides --init_dag."
