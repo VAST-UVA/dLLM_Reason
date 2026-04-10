@@ -46,7 +46,7 @@ model = LLaDAWrapper(
 from dllm_reason.graph.dag import TokenDAG
 
 # Constructors
-dag = TokenDAG.empty(seq_len)
+dag = TokenDAG.no_edges(seq_len)
 dag = TokenDAG.linear_chain(seq_len)
 dag = TokenDAG.from_edges(seq_len, [(0, 4), (4, 8)])
 dag = TokenDAG.from_levels(seq_len, [[0,1,2], [3,4,5], [6,7]])
@@ -77,7 +77,7 @@ Coarse-grained DAG over token spans (reduces search space by `span_size^2`).
 from dllm_reason.graph.span_dag import SpanDAG
 
 # Constructors
-sdag = SpanDAG.empty(num_spans=8, span_size=32)
+sdag = SpanDAG.no_edges(num_spans=8, span_size=32)
 sdag = SpanDAG.linear_chain(num_spans=8, span_size=32)
 sdag = SpanDAG.cot(num_spans=8, span_size=32, num_reasoning_steps=4)
 sdag = SpanDAG.from_levels(num_spans=8, span_size=32, levels=[[0,1],[2,3],[4,5,6,7]])

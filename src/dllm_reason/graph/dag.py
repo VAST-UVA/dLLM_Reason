@@ -54,7 +54,7 @@ class TokenDAG:
         return TokenDAG(self._adjacency.to(device))
 
     @classmethod
-    def empty(cls, seq_len: int, device: torch.device | str = "cpu") -> TokenDAG:
+    def no_edges(cls, seq_len: int, device: torch.device | str = "cpu") -> TokenDAG:
         """No edges — all positions are independent (fully parallel unmasking)."""
         adj = torch.zeros(seq_len, seq_len, dtype=torch.bool, device=device)
         return cls(adj)

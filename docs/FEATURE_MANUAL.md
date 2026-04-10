@@ -1,23 +1,23 @@
-# dLLM-Reason 功能手册（Feature Manual）
+# dLLM-Reason Feature Manual
 
-> 版本：v1.4.2  |  最后更新：2026-04-09  |  语言：中文
+> Version: v1.4.2  |  Last updated: 2026-04-09  |  Language: English  |  中文: [FEATURE_MANUAL.zh.md](FEATURE_MANUAL.zh.md)
 
-## 0. 项目定位
+## 0. Project Overview
 
-**dLLM-Reason** 是一个基于离散扩散语言模型（discrete diffusion LM, dLLM）的推理研究框架。其核心创新是用 **TokenDAG** 约束 token unmask 的偏序，从而把"推理依赖"显式地注入扩散生成过程。
+**dLLM-Reason** is a research framework for reasoning on top of discrete diffusion language models (dLLMs). Its core contribution is using a **TokenDAG** to constrain the partial order in which tokens are unmasked, explicitly injecting *reasoning dependencies* into the diffusion generation process.
 
-该框架允许：
+The framework enables:
 
-- 在任意 dLLM 后端（MDLM / SEDD / D3PM / LLaDA）之上，热切换不同的 **unmasking scheduler**；
-- 在推理任务上 **搜索最优 DAG 结构**（6 种搜索方法）；
-- 通过 **Episode Pipeline** 把采样轨迹持久化为可复用的"推理经验"；
-- 从 Episode 库进行 **SFT / GRPO / DiFFPO / UnmaskRL** 等多种学习；
-- 在 10 个 benchmark 上做统一评测；
-- 通过 **FastAPI 服务** 和 **Web UI** 进行交互式调试。
+- Hot-swapping **unmasking schedulers** on top of any dLLM backend (MDLM / SEDD / D3PM / LLaDA);
+- **Searching for optimal DAG structures** on reasoning tasks (6 search methods);
+- Persisting sampled rollouts as reusable "reasoning experience" via the **Episode Pipeline**;
+- Learning from the episode library with **SFT / GRPO / DiFFPO / UnmaskRL**;
+- Unified evaluation on 10 benchmarks;
+- Interactive debugging via a **FastAPI service** and **Web UI**.
 
 ---
 
-## 1. 顶层架构
+## 1. Top-Level Architecture
 
 ```
                      ┌──────────────────┐
@@ -37,13 +37,13 @@
                      └────────────────────┘
 ```
 
-关键 insight：**DAG 约束 ORDER，dLLM 提供 TOKEN PREDICTIONS，两者解耦**。任意 dLLM + 任意 scheduler 可自由组合。
+Key insight: **The DAG constrains ORDER, the dLLM supplies TOKEN PREDICTIONS, and the two are decoupled.** Any dLLM composes freely with any scheduler.
 
 ---
 
-## 2. 模型层 `dllm_reason.models`
+## 2. Models Layer — `dllm_reason.models`
 
-统一接口 `DiffusionLM`（`models/base.py`）：
+Unified `DiffusionLM` interface (`models/base.py`):
 
 ```python
 class DiffusionLM(nn.Module):
@@ -53,151 +53,151 @@ class DiffusionLM(nn.Module):
     def sample(self, scheduler, ...) -> Tensor: ...
 ```
 
-| 模型 | 文件 | 说明 |
-|------|------|------|
-| **MDLM** | `models/mdlm.py` | Masked diffusion LM；最简单的 baseline |
+| Model | File | Description |
+|-------|------|-------------|
+| **MDLM** | `models/mdlm.py` | Masked diffusion LM; simplest baseline |
 | **SEDD** | `models/sedd.py` | Score-Entropy Discrete Diffusion |
-| **D3PM** | `models/d3pm.py` | Discrete diffusion prior，支持 absorbing / uniform |
-| **LLaDA** | `models/llada.py` | HuggingFace `GSAI-ML/LLaDA-8B` 包装器 |
+| **D3PM** | `models/d3pm.py` | Discrete diffusion prior; supports absorbing / uniform |
+| **LLaDA** | `models/llada.py` | Wrapper around HuggingFace `GSAI-ML/LLaDA-8B` |
 
-后端 Transformer（`models/backbone/transformer.py`）：
+Backbone transformer (`models/backbone/transformer.py`):
 - Pre-LN, RMSNorm, SwiGLU, Rotary Position Embedding
-- 支持 timestep embedding（AdaLN / FiLM）
+- Timestep embeddings via AdaLN / FiLM
 
 ---
 
-## 3. Graph 层 `dllm_reason.graph`
+## 3. Graph Layer — `dllm_reason.graph`
 
-### 3.1 `TokenDAG`（`graph/dag.py`）
+### 3.1 `TokenDAG` (`graph/dag.py`)
 
-- 定义：`(seq_len, seq_len)` bool adjacency tensor，`adj[i, j] = True` 表示 **position i 必须在 j 之前 unmask**
-- 核心操作 `ready_positions(unmasked)` 用一次 GPU 矩阵运算确定哪些 position 现在可以 unmask：
+- Representation: a `(seq_len, seq_len)` boolean adjacency tensor where `adj[i, j] = True` means **position i must be unmasked before position j**.
+- Core operation `ready_positions(unmasked)` determines which positions are unblocked in a single GPU matrix op:
 
 ```python
 ready = (adj.logical_not() | unmasked.unsqueeze(-1)).all(dim=0)
 ```
 
-- API：
+- API:
   - `from_edges(edges, seq_len)`
   - `from_levels(levels, seq_len)`
   - `linear_chain(seq_len)`
-  - `empty(seq_len)`
+  - `no_edges(seq_len)`
   - `topological_levels()`
   - `ready_positions(unmasked_mask)`
   - `is_valid()` / `num_edges()`
   - `mutate(p_add, p_remove)`
 
-### 3.2 预定义模板（`graph/templates.py`）
+### 3.2 Predefined templates (`graph/templates.py`)
 
-| 名称 | 含义 | 适用场景 |
-|------|------|----------|
-| `cot` | 输出分段，每段依赖前段，段内并行 | 多步数学推理 |
-| `answer_first` | 答案 token 为 root 先 unmask，推理后填 | 验证型推理 |
-| `skeleton` | Level 0=结构 token，Level 1=操作数，Level 2=filler | 结构化推理 |
-| `bidirectional` | 从两端向中间逐步 unmask | 边界约束任务 |
-| `interleaved` | 交错分组，组间顺序、组内并行 | 交错计算/叙述 |
-| `linear` | 严格左→右（等价于 AR） | sanity check |
-| `random_low` | 随机 DAG，density=0.05 | search 种群 |
-| `random_high` | 随机 DAG，density=0.15 | search 种群 |
+| Name | Meaning | Use case |
+|------|---------|----------|
+| `cot` | Output split into segments; each segment depends on previous, parallel within | Multi-step math reasoning |
+| `answer_first` | Answer tokens are roots and unmask first; reasoning filled after | Verification-style reasoning |
+| `skeleton` | L0 = structural tokens, L1 = operands, L2 = filler | Structured reasoning |
+| `bidirectional` | Unmask inward from both ends | Boundary-constrained tasks |
+| `interleaved` | Interleaved groups, sequential across, parallel within | Interleaved compute / narration |
+| `linear` | Strict left-to-right (equivalent to AR) | Sanity check |
+| `random_low` | Random DAG, density = 0.05 | Search populations |
+| `random_high` | Random DAG, density = 0.15 | Search populations |
 
-构造函数：`build_all_templates(seq_len, device)` 一次拿到所有模板；`build_template(name, seq_len, device)` 拿单个。
+Constructors: `build_all_templates(seq_len, device)` returns every template at once; `build_template(name, seq_len, device)` returns a single one.
 
-### 3.3 其他
+### 3.3 Utilities
 
-- `graph/constraints.py`：无环性校验、安全 mutate
-- `graph/viz.py`：matplotlib + networkx 可视化
+- `graph/constraints.py` — acyclicity validation and safe mutate
+- `graph/viz.py` — matplotlib + networkx visualization
 
 ---
 
-## 4. Scheduler 层 `dllm_reason.scheduler`
+## 4. Scheduler Layer — `dllm_reason.scheduler`
 
-统一接口：
+Unified interface:
 
 ```python
 class UnmaskingScheduler(ABC):
     def select_positions(
         self,
         step: int,
-        mask: Tensor,        # 当前 mask
+        mask: Tensor,        # current mask
         logits: Tensor,      # (B, L, V)
         confidences: Tensor, # (B, L)
     ) -> Tensor: ...
 ```
 
-| 名称 | 文件 | 机制 |
-|------|------|------|
-| `random` | `random_scheduler.py` | 均匀采样 |
-| `confidence` | `confidence.py` | top-k max-prob |
-| `linear` | `linear_scheduler.py` | 严格左→右 |
-| `maskgit_cosine` | `maskgit_cosine.py` | 余弦 schedule |
-| `low_confidence_remask` | `low_conf_remask.py` | re-mask 低置信度重新预测 |
-| `entropy` | `entropy_scheduler.py` | top-k 负熵 |
-| `stochastic_confidence` | `stoch_conf.py` | Gumbel-top-k 采样 |
-| `adaptive_dynamic` | `adaptive_dynamic.py` | 置信度 + DAG readiness 加权 |
-| `semi_ar` | `semi_ar.py` | 块内并行，块间顺序 |
-| `curriculum` | `curriculum.py` | 难度从高到低递进 |
-| `dag` | `dag_scheduler.py` | **DAG 引导 ★核心创新** |
+| Name | File | Mechanism |
+|------|------|-----------|
+| `random` | `random_scheduler.py` | Uniform sampling |
+| `confidence` | `confidence.py` | Top-k max-prob |
+| `linear` | `linear_scheduler.py` | Strict left-to-right |
+| `maskgit_cosine` | `maskgit_cosine.py` | Cosine schedule |
+| `low_confidence_remask` | `low_conf_remask.py` | Re-mask low-confidence tokens and re-predict |
+| `entropy` | `entropy_scheduler.py` | Top-k by negative entropy |
+| `stochastic_confidence` | `stoch_conf.py` | Gumbel-top-k sampling |
+| `adaptive_dynamic` | `adaptive_dynamic.py` | Confidence + DAG-readiness weighted |
+| `semi_ar` | `semi_ar.py` | Parallel within blocks, sequential across |
+| `curriculum` | `curriculum.py` | Hard-to-easy progression |
+| `dag` | `dag_scheduler.py` | **DAG-guided ★ core contribution** |
 
-**DAGScheduler 每步流程：**
+**DAGScheduler per-step flow:**
 
-1. 通过 `dag.ready_positions(already_unmasked)` 拿到所有依赖已满足的 position
-2. 与仍被 mask 的 position 取交集 → eligible positions
-3. 子策略从 eligible 中选 k 个（支持 `all_ready` / `confidence_topk` / `proportional`）
-4. 返回选中的 positions
+1. Call `dag.ready_positions(already_unmasked)` for all positions whose dependencies are satisfied.
+2. Intersect with the still-masked positions → eligible positions.
+3. A sub-policy selects k from eligible (`all_ready` / `confidence_topk` / `proportional`).
+4. Return the selected positions.
 
 ---
 
-## 5. Search 层 `dllm_reason.search`
+## 5. Search Layer — `dllm_reason.search`
 
-统一接口：
+Unified interface:
 
 ```python
 class DAGSearcher:
     def search(self, model, dataset, fitness_fn, budget) -> TokenDAG: ...
 ```
 
-| 方法 | 文件 | 适用场景 |
-|------|------|----------|
-| Greedy | `greedy.py` | 快速 baseline；逐条加/删边 |
-| Evolutionary | `evolutionary.py` | population + crossover + mutation |
-| RL Policy | `rl_policy.py` | REINFORCE 学 DAG 编辑策略 |
-| Differentiable | `differentiable.py` | NOTEARS-style 连续化搜索 |
-| End-to-End | `e2e_search.py` | 端到端梯度 |
-| NAS Controller | `nas_search.py` | LSTM controller 生成 DAG |
+| Method | File | When to use |
+|--------|------|-------------|
+| Greedy | `greedy.py` | Fast baseline; add/remove one edge at a time |
+| Evolutionary | `evolutionary.py` | Population + crossover + mutation |
+| RL Policy | `rl_policy.py` | REINFORCE over a DAG-editing policy |
+| Differentiable | `differentiable.py` | NOTEARS-style continuous relaxation |
+| End-to-End | `e2e_search.py` | End-to-end gradient |
+| NAS Controller | `nas_search.py` | LSTM controller that emits DAGs |
 
-**Fitness 信号**（`search/fitness.py`）：
+**Fitness signals** (`search/fitness.py`):
 - `accuracy`, `reward`, `log_likelihood`, `composite`
 
-种群初始化默认用 `build_all_templates(seq_len)` 作为 seeds。
+Population initialization defaults to `build_all_templates(seq_len)` as seeds.
 
 ---
 
-## 6. Training 层 `dllm_reason.training`
+## 6. Training Layer — `dllm_reason.training`
 
-| 模式 | 文件 | 描述 |
-|------|------|------|
-| `pretrain` | `pretrain.py` | 标准 MDM 预训练 |
-| `finetune` | `finetune.py` | 监督 finetune |
-| `dag_aware` | `dag_aware_train.py` | 按 DAG 偏置 mask 分布做训练 |
+| Mode | File | Description |
+|------|------|-------------|
+| `pretrain` | `pretrain.py` | Standard MDM pretraining |
+| `finetune` | `finetune.py` | Supervised finetune |
+| `dag_aware` | `dag_aware_train.py` | Training with a DAG-biased masking distribution |
 | `rl` | `rl_train.py` | diffu-GRPO / DiFFPO / UnmaskingPolicyRL |
 
-### 6.1 RL 详解
+### 6.1 RL details
 
-`rl_train.py` 包含：
+`rl_train.py` contains:
 
-- **`DiffuGRPO`**：参考 `d1` 仓库，对 diffusion LM 的 GRPO
-- **`DiFFPO`**（Diffusion Fast-Forward Policy Optimization）：
+- **`DiffuGRPO`** — GRPO adapted to diffusion LMs, referencing the `d1` repository.
+- **`DiFFPO`** (Diffusion Fast-Forward Policy Optimization):
   - PPO-clip advantage
-  - `StepBudgetController`：动态控制每个 episode 的扩散步数上限
-- **`UnmaskingPolicyNet` + `UnmaskingPolicyRL`**：
-  - frozen LM，只训一个小的 policy net 学 scheduler
-  - process-level REINFORCE
-  - 可把 DAG 结构作为 policy 的输入特征
+  - `StepBudgetController`: dynamically caps the number of diffusion steps per episode.
+- **`UnmaskingPolicyNet` + `UnmaskingPolicyRL`**:
+  - Freeze the LM, train only a small policy net that acts as the scheduler.
+  - Process-level REINFORCE.
+  - The DAG structure can be fed in as a policy input feature.
 
-### 6.2 训练 CLI
+### 6.2 Training CLI
 
 ```bash
-# 基础
+# Basic
 dllm-train --model mdlm --dataset gsm8k --mode pretrain
 
 # DAG-aware
@@ -206,56 +206,56 @@ dllm-train --model mdlm --dataset gsm8k --dag_aware --dag cot
 # RL
 dllm-train --model mdlm --dataset gsm8k --mode rl --rl_algo diffu_grpo
 
-# 自定义 run 名字（v1.4.1+）
+# Custom run name (v1.4.1+)
 dllm-train --model mdlm --dataset gsm8k --name my_experiment
 ```
 
-自动生成的 checkpoint 目录：`checkpoints/<name>_<timestamp>/`
+Auto-generated checkpoint directory: `checkpoints/<name>_<timestamp>/`
 
 ---
 
-## 7. Episode Pipeline & Library `dllm_reason.library`
+## 7. Episode Pipeline & Library — `dllm_reason.library`
 
-核心思路：把 dLLM 推理轨迹（prompt, DAG, output, correct, score）作为"经验"持久化，再离线/在线学习。
+Core idea: persist dLLM rollout traces (prompt, DAG, output, correctness, score) as "experience" for offline or online learning.
 
 ### 7.1 `DAGEpisode` dataclass
 
-字段：`episode_id, prompt, task_type, ground_truth, strategy_name, dag_seq_len, dag_json, output, correct, score, reward, meta, created_at`
+Fields: `episode_id, prompt, task_type, ground_truth, strategy_name, dag_seq_len, dag_json, output, correct, score, reward, meta, created_at`.
 
-### 7.2 `EpisodeStore`（SQLite WAL 模式）
+### 7.2 `EpisodeStore` (SQLite, WAL mode)
 
-API：
+API:
 - `add(episode)` / `add_many(episodes)`
 - `query(task_type=..., strategy=..., min_score=..., limit=...)`
 - `delete(episode_id)`
 - `stats()`
 - `close()`
 
-### 7.3 脚本
+### 7.3 Scripts
 
-| 命令 | 功能 |
-|------|------|
-| `dllm-collect-episodes` | 并发 rollout → 写入 store |
-| `dllm-learn-from-episodes` | 从 store 读取 → SFT / GRPO / DiFFPO / UnmaskRL |
-| `dllm-inspect-episodes` | CLI 浏览 episode |
-| `dllm-manage-library` | 清理、去重、导出 |
-| `dllm-add-feedback` | 人类反馈打分入库 |
+| Command | Purpose |
+|---------|---------|
+| `dllm-collect-episodes` | Concurrent rollouts → write to store |
+| `dllm-learn-from-episodes` | Read from store → SFT / GRPO / DiFFPO / UnmaskRL |
+| `dllm-inspect-episodes` | CLI browser |
+| `dllm-manage-library` | Clean up, deduplicate, export |
+| `dllm-add-feedback` | Push human feedback scores into the store |
 
 ---
 
-## 8. 评测层 `dllm_reason.eval`
+## 8. Evaluation Layer — `dllm_reason.eval`
 
-`reasoning_eval.py` 支持 10 个 benchmark：
+`reasoning_eval.py` supports 10 benchmarks:
 
-| 类别 | benchmarks |
-|------|-----------|
-| 代码 | `mbpp`, `humaneval` |
-| 数学 | `gsm8k`, `math`, `aime` |
-| 多选 | `arc`, `mmlu`, `gpqa` |
-| 多跳 | `hotpotqa` |
-| 逻辑 | `prontoqa` |
+| Category | Benchmarks |
+|----------|------------|
+| Code | `mbpp`, `humaneval` |
+| Math | `gsm8k`, `math`, `aime` |
+| Multiple choice | `arc`, `mmlu`, `gpqa` |
+| Multi-hop | `hotpotqa` |
+| Logic | `prontoqa` |
 
-指标：`exact_match`, `accuracy`, `pass@k`, `rouge`, `reasoning_score`（自定义）
+Metrics: `exact_match`, `accuracy`, `pass@k`, `rouge`, `reasoning_score` (custom).
 
 ```bash
 dllm-evaluate --model mdlm --ckpt <path> --benchmark gsm8k
@@ -264,70 +264,70 @@ dllm-eval-dags --model mdlm --benchmark gsm8k --dag_dir <dir>
 
 ---
 
-## 9. 服务与 UI
+## 9. Services & UI
 
-### 9.1 FastAPI 服务（`scripts/serve.py`）
+### 9.1 FastAPI service (`scripts/serve.py`)
 
-- 启动：`dllm-serve --model mdlm --port 8000`
-- 端点：
-  - `POST /generate` — 生成
-  - `POST /switch_strategy` — 热切换 scheduler
-  - `GET /strategies` — 列出可用 scheduler
-  - `POST /switch_dag` — 热切换 DAG
+- Launch: `dllm-serve --model mdlm --port 8000`
+- Endpoints:
+  - `POST /generate` — generate text
+  - `POST /switch_strategy` — hot-swap the scheduler
+  - `GET /strategies` — list available schedulers
+  - `POST /switch_dag` — hot-swap the DAG
   - `GET /health`
 
-### 9.2 Web UI（`scripts/webui.py`）
+### 9.2 Web UI (`scripts/webui.py`)
 
-- 启动：`dllm-webui`
-- 单文件 HTML Dashboard，支持：
-  - 模型/策略切换
-  - DAG 可视化
-  - Episode 浏览
+- Launch: `dllm-webui`
+- Single-file HTML dashboard with:
+  - Model / strategy switching
+  - DAG visualization
+  - Episode browser
 
-### 9.3 DAG 分析脚本
+### 9.3 DAG analysis scripts
 
-- `dllm-visualize-dag` — 导出 PNG/SVG
-- `dllm-analyze-dag` — 统计边数、最长路径、ready fan-out
+- `dllm-visualize-dag` — export PNG / SVG
+- `dllm-analyze-dag` — stats on edges, longest path, ready fan-out
 
 ---
 
-## 10. CLI Entry Points（`pyproject.toml [project.scripts]`）
+## 10. CLI Entry Points (`pyproject.toml [project.scripts]`)
 
-v1.4.2 共 **17 个** entry points：
+v1.4.2 ships **17** entry points:
 
-| 命令 | 脚本 | 功能 |
-|------|------|------|
-| `dllm-train` | `train.py` | 训练（支持 `--name`） |
-| `dllm-evaluate` | `evaluate.py` | 单模型评测 |
-| `dllm-eval-dags` | `eval_dags.py` | 批量 DAG 评测 |
-| `dllm-search-dag` | `search_dag.py` | 结构搜索 |
-| `dllm-visualize-dag` | `visualize_dag.py` | 可视化 |
-| `dllm-serve` | `serve.py` | REST 服务 |
-| `dllm-webui` | `webui.py` | 浏览器 dashboard |
-| `dllm-run-pipeline` | `run_pipeline.py` | 5 阶段端到端管线 |
-| `dllm-collect-episodes` | `collect_episodes.py` | Episode 采集 |
-| `dllm-learn-from-episodes` | `learn_from_episodes.py` | 离线学习 |
-| `dllm-manage-library` | `manage_library.py` | 清理/导出 |
-| `dllm-benchmark-schedulers` | `benchmark_schedulers.py` | 多调度对比 |
-| `dllm-analyze-dag` | `analyze_dag.py` | 结构统计 |
+| Command | Script | Purpose |
+|---------|--------|---------|
+| `dllm-train` | `train.py` | Training (supports `--name`) |
+| `dllm-evaluate` | `evaluate.py` | Single-model evaluation |
+| `dllm-eval-dags` | `eval_dags.py` | Batch DAG evaluation |
+| `dllm-search-dag` | `search_dag.py` | Structure search |
+| `dllm-visualize-dag` | `visualize_dag.py` | Visualization |
+| `dllm-serve` | `serve.py` | REST service |
+| `dllm-webui` | `webui.py` | Browser dashboard |
+| `dllm-run-pipeline` | `run_pipeline.py` | 5-stage end-to-end pipeline |
+| `dllm-collect-episodes` | `collect_episodes.py` | Episode collection |
+| `dllm-learn-from-episodes` | `learn_from_episodes.py` | Offline learning |
+| `dllm-manage-library` | `manage_library.py` | Cleanup / export |
+| `dllm-benchmark-schedulers` | `benchmark_schedulers.py` | Scheduler comparison |
+| `dllm-analyze-dag` | `analyze_dag.py` | Structural stats |
 | `dllm-inspect-episodes` | `inspect_episodes.py` | CLI browse |
-| `dllm-generate-templates` | `generate_templates.py` | 生成模板候选 |
-| `dllm-add-feedback` | `add_feedback.py` | 人类反馈入库 |
-| `dllm-merge-dags` | `merge_dags.py` | DAG 合并（并集/投票） |
+| `dllm-generate-templates` | `generate_templates.py` | Emit template candidates |
+| `dllm-add-feedback` | `add_feedback.py` | Human-feedback ingestion |
+| `dllm-merge-dags` | `merge_dags.py` | DAG merging (union / voting) |
 
 ---
 
-## 11. 5-Stage Pipeline（`scripts/run_pipeline.py`）
+## 11. 5-Stage Pipeline (`scripts/run_pipeline.py`)
 
-端到端一键管线，支持 `--resume`、`--stop_on_error`。
+A one-shot end-to-end pipeline supporting `--resume` and `--stop_on_error`.
 
-1. **download** — HuggingFace dataset 缓存
-2. **collect** — 用 baseline scheduler 生成初始 Episode 库
-3. **search** — 以 Episode 库为 fitness 源搜索 DAG
-4. **learn** — 根据 flag 触发 SFT / GRPO / DiFFPO / UnmaskRL
-5. **eval** — 对新模型 + 新 DAG 在 benchmark 上评测
+1. **download** — cache the HuggingFace dataset
+2. **collect** — generate the initial episode library with a baseline scheduler
+3. **search** — search a DAG using the episode library as the fitness source
+4. **learn** — trigger SFT / GRPO / DiFFPO / UnmaskRL depending on flags
+5. **eval** — evaluate the new model + new DAG on the benchmark
 
-示例：
+Example:
 
 ```bash
 dllm-run-pipeline \
@@ -340,9 +340,9 @@ dllm-run-pipeline \
 
 ---
 
-## 12. 典型工作流
+## 12. Typical Workflows
 
-### 12.1 Reproduce baseline
+### 12.1 Reproduce a baseline
 
 ```bash
 dllm-train --model mdlm --dataset gsm8k --mode pretrain
@@ -352,13 +352,13 @@ dllm-evaluate --model mdlm --ckpt checkpoints/mdlm_gsm8k_pretrain_* --benchmark 
 ### 12.2 DAG-guided inference
 
 ```bash
-# 用预定义模板评测
+# Evaluate with predefined templates
 dllm-eval-dags --model mdlm --benchmark gsm8k --templates cot,skeleton,bidirectional
 
-# 搜索最优 DAG
+# Search for the best DAG
 dllm-search-dag --model mdlm --dataset gsm8k --method evolutionary --budget 200
 
-# 用搜索到的 DAG 评测
+# Evaluate with the searched DAG
 dllm-evaluate --model mdlm --dag runs/search/best.pt --benchmark gsm8k
 ```
 
@@ -378,9 +378,9 @@ dllm-run-pipeline --model mdlm --dataset gsm8k --output_dir runs/full_exp
 
 ---
 
-## 13. 配置系统（Hydra）
+## 13. Configuration System (Hydra)
 
-`configs/` 目录：
+The `configs/` directory:
 
 ```
 configs/
@@ -388,10 +388,10 @@ configs/
 ├── graph/          (linear.yaml, cot.yaml, answer_first.yaml, ...)
 ├── search/         (greedy.yaml, evolutionary.yaml, rl_policy.yaml)
 ├── task/           (gsm8k.yaml, math.yaml, arc.yaml, ...)
-└── experiment/     (组合实验配置)
+└── experiment/     (combined experiment configs)
 ```
 
-Override 示例：
+Override example:
 
 ```bash
 dllm-train +experiment=mdlm_gsm8k model.lr=5e-4
@@ -399,7 +399,7 @@ dllm-train +experiment=mdlm_gsm8k model.lr=5e-4
 
 ---
 
-## 14. 模块依赖速查
+## 14. Module Dependency Quick Reference
 
 ```
 models/base.py            ─┐
@@ -415,24 +415,24 @@ eval/reasoning_eval.py    ──→ scripts/evaluate.py, eval_dags.py
 
 ---
 
-## 15. 版本历史（节选）
+## 15. Version History (selected)
 
-- **v1.0** — 初始 MDLM + random/confidence/linear scheduler + DAG core
-- **v1.2.3** — SEDD + D3PM baselines，多个 DAG templates
-- **v1.3.0** — LLaDA 集成，扩展 benchmarks 到 10 个
+- **v1.0** — initial MDLM + random / confidence / linear schedulers + DAG core
+- **v1.2.3** — SEDD + D3PM baselines, additional DAG templates
+- **v1.3.0** — LLaDA integration, benchmark suite expanded to 10
 - **v1.4.0** — Episode Pipeline + DAG Library + 4 search methods
-- **v1.4.1** — Training CLI 增强（`--name` 参数）
-- **v1.4.2** — `run_pipeline.py` 5-stage 管线 + 多个新 CLI 脚本
+- **v1.4.1** — Training CLI enhancements (`--name` argument)
+- **v1.4.2** — 5-stage `run_pipeline.py` + new CLI scripts
 
 ---
 
-## 16. 已知问题
+## 16. Known Issues
 
-请参见 `docs/BUG_AUDIT_V1.4.2.md`（见随附审计报告），包含 CRITICAL / HIGH / LOW 三级问题列表。本手册对应功能的实现细节可能存在个别 bug，以审计报告和最新 commit 为准。
+See `docs/BUG_AUDIT_V1.4.2.md` (the accompanying audit report) for the CRITICAL / HIGH / LOW issue lists. Implementation details in this manual may still contain individual bugs; the audit report and the latest commits are authoritative.
 
 ---
 
-## 17. 致谢与引用
+## 17. Acknowledgements & References
 
 - MDLM: https://github.com/kuleshov-group/mdlm
 - SEDD: https://github.com/louaaron/Score-Entropy-Discrete-Diffusion

@@ -237,8 +237,8 @@ class DAGController(nn.Module):
             if sdag.is_valid():
                 dags.append(sdag.to_token_dag())
             else:
-                # Fallback: empty DAG
-                dags.append(TokenDAG.empty(self.num_spans * span_size))
+                # Fallback: no-edges DAG
+                dags.append(TokenDAG.no_edges(self.num_spans * span_size))
 
         return dags
 
@@ -401,7 +401,7 @@ class NASDAGSearch(DAGSearcher):
         optimizer = torch.optim.Adam(controller.parameters(), lr=cfg.lr_controller)
 
         baseline = 0.0  # EMA baseline for REINFORCE
-        best_dag = TokenDAG.empty(num_spans * span_size)
+        best_dag = TokenDAG.no_edges(num_spans * span_size)
         best_fitness = eval_fn(model, best_dag)
         history = [{"fitness": best_fitness, "step": 0}]
 
