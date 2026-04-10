@@ -1,6 +1,6 @@
 # dLLM-Reason Feature Manual
 
-> Version: v1.4.2  |  Last updated: 2026-04-09  |  Language: English  |  中文: [FEATURE_MANUAL.zh.md](FEATURE_MANUAL.zh.md)
+> Version: v1.5.0  |  Last updated: 2026-04-09  |  Language: English  |  中文: [FEATURE_MANUAL.zh.md](FEATURE_MANUAL.zh.md)
 
 ## 0. Project Overview
 
@@ -423,6 +423,8 @@ eval/reasoning_eval.py    ──→ scripts/evaluate.py, eval_dags.py
 - **v1.4.0** — Episode Pipeline + DAG Library + 4 search methods
 - **v1.4.1** — Training CLI enhancements (`--name` argument)
 - **v1.4.2** — 5-stage `run_pipeline.py` + new CLI scripts
+- **v1.4.3** — Bug fixes (`empty()` rename), `publish.yml` repo guard
+- **v1.5.0** — Research pipeline (`run_research_pipeline.py`), ablation runner (`run_ablation.py`), batch inference API, model hot-swap
 
 ---
 

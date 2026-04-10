@@ -1,6 +1,6 @@
 # dLLM-Reason 功能手册（Feature Manual）
 
-> 版本：v1.4.2  |  最后更新：2026-04-09  |  语言：中文  |  English: [FEATURE_MANUAL.md](FEATURE_MANUAL.md)
+> 版本：v1.5.0  |  最后更新：2026-04-09  |  语言：中文  |  English: [FEATURE_MANUAL.md](FEATURE_MANUAL.md)
 
 ## 0. 项目定位
 
@@ -423,6 +423,8 @@ eval/reasoning_eval.py    ──→ scripts/evaluate.py, eval_dags.py
 - **v1.4.0** — Episode Pipeline + DAG Library + 4 search methods
 - **v1.4.1** — Training CLI 增强（`--name` 参数）
 - **v1.4.2** — `run_pipeline.py` 5-stage 管线 + 多个新 CLI 脚本
+- **v1.4.3** — Bug 修复（`empty()` 重命名），`publish.yml` 仓库守卫
+- **v1.5.0** — 研究管线（`run_research_pipeline.py`），消融实验脚本（`run_ablation.py`），批量推理 API，模型热切换
 
 ---
 
