@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from transformers import AutoTokenizer
 
+from dllm_reason.utils.local_resolve import resolve_model_path
+
 
 def get_tokenizer(
     name_or_path: str = "gpt2",
@@ -18,6 +20,7 @@ def get_tokenizer(
     Returns:
         Configured tokenizer with mask token
     """
+    name_or_path = resolve_model_path(name_or_path)
     tokenizer = AutoTokenizer.from_pretrained(name_or_path)
 
     # Ensure padding token exists

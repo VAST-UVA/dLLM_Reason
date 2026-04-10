@@ -85,9 +85,9 @@ class ReasoningDataset(Dataset):
 
 def load_gsm8k(split: str = "train", **kwargs) -> list[dict]:
     """Load GSM8K dataset."""
-    from datasets import load_dataset
+    from dllm_reason.utils.local_resolve import resolve_dataset
 
-    ds = load_dataset("openai/gsm8k", "main", split=split)
+    ds = resolve_dataset("openai/gsm8k", config="main", split=split)
     data = []
     for item in ds:
         # Extract final numerical answer from the solution
@@ -104,9 +104,9 @@ def load_gsm8k(split: str = "train", **kwargs) -> list[dict]:
 
 def load_math(split: str = "train", **kwargs) -> list[dict]:
     """Load MATH dataset."""
-    from datasets import load_dataset
+    from dllm_reason.utils.local_resolve import resolve_dataset
 
-    ds = load_dataset("hendrycks/competition_math", split=split)
+    ds = resolve_dataset("hendrycks/competition_math", split=split)
     data = []
     for item in ds:
         data.append({
@@ -120,10 +120,10 @@ def load_math(split: str = "train", **kwargs) -> list[dict]:
 
 def load_arc(split: str = "train", challenge: bool = True, **kwargs) -> list[dict]:
     """Load ARC dataset (Challenge or Easy)."""
-    from datasets import load_dataset
+    from dllm_reason.utils.local_resolve import resolve_dataset
 
     subset = "ARC-Challenge" if challenge else "ARC-Easy"
-    ds = load_dataset("allenai/ai2_arc", subset, split=split)
+    ds = resolve_dataset("allenai/ai2_arc", config=subset, split=split)
     data = []
     for item in ds:
         choices = item["choices"]
@@ -146,9 +146,9 @@ def load_arc(split: str = "train", challenge: bool = True, **kwargs) -> list[dic
 
 def load_prontoqa(split: str = "train", **kwargs) -> list[dict]:
     """Load ProntoQA logical reasoning dataset."""
-    from datasets import load_dataset
+    from dllm_reason.utils.local_resolve import resolve_dataset
 
-    ds = load_dataset("renma/ProntoQA", split=split)
+    ds = resolve_dataset("renma/ProntoQA", split=split)
     data = []
     for item in ds:
         data.append({
