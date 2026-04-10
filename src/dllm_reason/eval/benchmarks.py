@@ -235,9 +235,9 @@ class MBPPEvaluator(BenchmarkEvaluator):
     ]
 
     def evaluate(self) -> dict[str, Any]:
-        from datasets import load_dataset
+        from dllm_reason.utils.local_resolve import resolve_dataset
 
-        dataset = load_dataset("google-research-datasets/mbpp", "sanitized", split="test")
+        dataset = resolve_dataset("google-research-datasets/mbpp", config="sanitized", split="test")
         items = list(dataset)
         if self.num_samples:
             items = items[:self.num_samples]
@@ -394,9 +394,9 @@ class HumanEvalEvaluator(BenchmarkEvaluator):
     ]
 
     def evaluate(self) -> dict[str, Any]:
-        from datasets import load_dataset
+        from dllm_reason.utils.local_resolve import resolve_dataset
 
-        dataset = load_dataset("openai/openai_humaneval", split="test")
+        dataset = resolve_dataset("openai/openai_humaneval", split="test")
         items = list(dataset)
         if self.num_samples:
             items = items[:self.num_samples]
@@ -588,9 +588,9 @@ class HotpotQAEvaluator(BenchmarkEvaluator):
     ]
 
     def evaluate(self) -> dict[str, Any]:
-        from datasets import load_dataset
+        from dllm_reason.utils.local_resolve import resolve_dataset
 
-        dataset = load_dataset("hotpot_qa", "distractor", split="validation")
+        dataset = resolve_dataset("hotpot_qa", config="distractor", split="validation")
         items = list(dataset)
         if self.num_samples:
             items = items[:self.num_samples]
@@ -690,7 +690,7 @@ class MMLUEvaluator(BenchmarkEvaluator):
         self.subjects = subjects or self.DEFAULT_SUBJECTS
 
     def evaluate(self) -> dict[str, Any]:
-        from datasets import load_dataset
+        from dllm_reason.utils.local_resolve import resolve_dataset
 
         all_correct = 0
         all_total = 0
@@ -700,8 +700,8 @@ class MMLUEvaluator(BenchmarkEvaluator):
 
         for subject in tqdm(self.subjects, desc="MMLU subjects"):
             try:
-                dataset = load_dataset("cais/mmlu", subject, split="test")
-                val_dataset = load_dataset("cais/mmlu", subject, split="validation")
+                dataset = resolve_dataset("cais/mmlu", config=subject, split="test")
+                val_dataset = resolve_dataset("cais/mmlu", config=subject, split="validation")
             except Exception as e:
                 logger.warning(f"Could not load MMLU subject '{subject}': {e}")
                 continue
@@ -814,9 +814,9 @@ class GSM8KEvaluator(BenchmarkEvaluator):
     ]
 
     def evaluate(self) -> dict[str, Any]:
-        from datasets import load_dataset
+        from dllm_reason.utils.local_resolve import resolve_dataset
 
-        dataset = load_dataset("openai/gsm8k", "main", split="test")
+        dataset = resolve_dataset("openai/gsm8k", config="main", split="test")
         items = list(dataset)
         if self.num_samples:
             items = items[:self.num_samples]
@@ -902,9 +902,9 @@ class MATHEvaluator(BenchmarkEvaluator):
     ]
 
     def evaluate(self) -> dict[str, Any]:
-        from datasets import load_dataset
+        from dllm_reason.utils.local_resolve import resolve_dataset
 
-        dataset = load_dataset("hendrycks/competition_math", split="test")
+        dataset = resolve_dataset("hendrycks/competition_math", split="test")
         items = list(dataset)
         if self.num_samples:
             items = items[:self.num_samples]
@@ -1011,9 +1011,9 @@ class ARCEvaluator(BenchmarkEvaluator):
     ]
 
     def evaluate(self) -> dict[str, Any]:
-        from datasets import load_dataset
+        from dllm_reason.utils.local_resolve import resolve_dataset
 
-        dataset = load_dataset("allenai/ai2_arc", "ARC-Challenge", split="test")
+        dataset = resolve_dataset("allenai/ai2_arc", config="ARC-Challenge", split="test")
         items = list(dataset)
         if self.num_samples:
             items = items[:self.num_samples]
@@ -1099,12 +1099,12 @@ class ProntoQAEvaluator(BenchmarkEvaluator):
     ]
 
     def evaluate(self) -> dict[str, Any]:
-        from datasets import load_dataset
+        from dllm_reason.utils.local_resolve import resolve_dataset
 
         try:
-            dataset = load_dataset("renma/ProntoQA", split="test")
+            dataset = resolve_dataset("renma/ProntoQA", split="test")
         except Exception:
-            dataset = load_dataset("renma/ProntoQA", split="train")
+            dataset = resolve_dataset("renma/ProntoQA", split="train")
 
         items = list(dataset)
         if self.num_samples:
@@ -1184,10 +1184,10 @@ class GPQAEvaluator(BenchmarkEvaluator):
     ]
 
     def evaluate(self) -> dict[str, Any]:
-        from datasets import load_dataset
+        from dllm_reason.utils.local_resolve import resolve_dataset
 
         # GPQA Diamond is the hardest, expert-validated subset
-        dataset = load_dataset("Idavidrein/gpqa", "gpqa_diamond", split="train")
+        dataset = resolve_dataset("Idavidrein/gpqa", config="gpqa_diamond", split="train")
         items = list(dataset)
         if self.num_samples:
             items = items[:self.num_samples]
@@ -1283,18 +1283,18 @@ class AIMEEvaluator(BenchmarkEvaluator):
     ]
 
     def evaluate(self) -> dict[str, Any]:
-        from datasets import load_dataset
+        from dllm_reason.utils.local_resolve import resolve_dataset
 
         # Use AI-MO/aimo-validation-aime which has AIME problems
         try:
-            dataset = load_dataset("AI-MO/aimo-validation-aime", split="train")
+            dataset = resolve_dataset("AI-MO/aimo-validation-aime", split="train")
         except Exception:
             # Fallback: use the broader competition math set
             try:
-                dataset = load_dataset("Maxwell-Jia/AIME_2024", split="train")
+                dataset = resolve_dataset("Maxwell-Jia/AIME_2024", split="train")
             except Exception:
                 logger.warning("Could not load AIME dataset — trying contest_math")
-                dataset = load_dataset("hendrycks/competition_math", split="test")
+                dataset = resolve_dataset("hendrycks/competition_math", split="test")
 
         items = list(dataset)
         if self.num_samples:

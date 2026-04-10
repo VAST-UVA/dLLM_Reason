@@ -227,12 +227,15 @@ def main():
         "float32":  torch.float32,
     }
 
-    print(f"Loading tokenizer from {args.model} ...")
-    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    from dllm_reason.utils.local_resolve import resolve_model_path
+    resolved_model = resolve_model_path(args.model)
 
-    print(f"Loading model from {args.model} ...")
+    print(f"Loading tokenizer from {resolved_model} ...")
+    tokenizer = AutoTokenizer.from_pretrained(resolved_model, trust_remote_code=True)
+
+    print(f"Loading model from {resolved_model} ...")
     model = AutoModel.from_pretrained(
-        args.model,
+        resolved_model,
         trust_remote_code=True,
         torch_dtype=dtype_map[args.dtype],
     ).cuda().eval()

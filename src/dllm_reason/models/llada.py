@@ -22,6 +22,7 @@ from transformers import AutoTokenizer, AutoModel, AutoConfig
 from dllm_reason.models.base import DiffusionLM, DiffusionOutput
 from dllm_reason.utils.registry import MODEL_REGISTRY
 from dllm_reason.utils.logging import get_logger
+from dllm_reason.utils.local_resolve import resolve_model_path
 
 logger = get_logger(__name__)
 
@@ -47,6 +48,9 @@ class LLaDAWrapper(DiffusionLM):
         trust_remote_code: bool = True,
         quantization_config=None,
     ):
+        # Resolve local checkpoint path before downloading from HuggingFace
+        model_id = resolve_model_path(model_id)
+
         # Load tokenizer first to get vocab info
         logger.info(f"Loading tokenizer from {model_id}")
         tokenizer = AutoTokenizer.from_pretrained(
