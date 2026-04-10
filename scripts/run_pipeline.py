@@ -335,7 +335,7 @@ def parse_args() -> argparse.Namespace:
                    choices=["accuracy", "perplexity", "combined"])
     p.add_argument("--search_fitness_samples", type=int, default=50)
     p.add_argument("--search_init_dag", default="cot",
-                   choices=["empty", "cot", "skeleton", "linear"])
+                   choices=["cot", "skeleton", "linear"])
     p.add_argument("--population_size", type=int, default=20)
     p.add_argument("--mutation_rate",   type=float, default=0.3)
 

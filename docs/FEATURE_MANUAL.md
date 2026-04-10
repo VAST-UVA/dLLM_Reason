@@ -97,7 +97,6 @@ ready = (adj.logical_not() | unmasked.unsqueeze(-1)).all(dim=0)
 | `bidirectional` | 从两端向中间逐步 unmask | 边界约束任务 |
 | `interleaved` | 交错分组，组间顺序、组内并行 | 交错计算/叙述 |
 | `linear` | 严格左→右（等价于 AR） | sanity check |
-| `empty` | 无边，全并行（MaskGIT 风格） | baseline |
 | `random_low` | 随机 DAG，density=0.05 | search 种群 |
 | `random_high` | 随机 DAG，density=0.15 | search 种群 |
 

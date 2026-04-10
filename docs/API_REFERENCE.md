@@ -99,7 +99,7 @@ from dllm_reason.graph.templates import (
     build_all_templates,  # dict[str, TokenDAG] for every/selected template
     build_template,       # single TokenDAG by name
     TEMPLATE_NAMES,       # ['cot','answer_first','skeleton','bidirectional',
-                          #  'interleaved','linear','empty','random_low','random_high']
+                          #  'interleaved','linear','random_low','random_high']
 )
 
 # All templates for a given seq_len
@@ -119,7 +119,6 @@ from dllm_reason.graph.templates import (
     bidirectional_dag,         # "bidirectional"— outside-in unmasking
     interleaved_dag,           # "interleaved"  — alternating groups
     linear_chain_dag,          # "linear"       — strict left-to-right AR
-    empty_dag,                 # "empty"        — no edges (fully parallel)
     random_dag,                # "random_low/high" — random with given density
 )
 
@@ -244,7 +243,7 @@ from dllm_reason.search.evolutionary import EvolutionarySearch
 
 searcher = EvolutionarySearch(
     population_size=20,
-    init_templates=None,            # None = default set (cot/skeleton/bidirectional/answer_first/empty)
+    init_templates=None,            # None = default set (cot/skeleton/bidirectional/answer_first)
     # init_templates=["cot","skeleton"]  # explicit subset
     # init_templates=[]              # disable templates, fill with random only
     library=dag_store,

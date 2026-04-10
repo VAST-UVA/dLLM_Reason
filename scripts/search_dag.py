@@ -53,8 +53,8 @@ def parse_args():
     parser.add_argument("--mutation_rate", type=float, default=0.3)
 
     # Initial DAG seed
-    parser.add_argument("--init_dag", type=str, default="empty",
-                        choices=["empty", "cot", "skeleton", "linear"],
+    parser.add_argument("--init_dag", type=str, default="cot",
+                        choices=["cot", "skeleton", "linear"],
                         help="Initial DAG to start search from")
     parser.add_argument("--init_cot_steps", type=int, default=4)
 
@@ -80,9 +80,7 @@ def build_initial_dag(name: str, seq_len: int, cot_steps: int, device):
     from dllm_reason.graph.dag import TokenDAG
     from dllm_reason.graph.templates import chain_of_thought_dag
 
-    if name == "empty":
-        return TokenDAG.empty(seq_len, device=device)
-    elif name == "cot":
+    if name == "cot":
         return chain_of_thought_dag(seq_len, cot_steps, device=device)
     elif name == "linear":
         return TokenDAG.linear_chain(seq_len, device=device)
