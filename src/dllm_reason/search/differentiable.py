@@ -162,6 +162,7 @@ class DifferentiableDAGSearch(DAGSearcher):
         lmbda = self.lambda_init
         rho = self.rho_init
         prev_h = float("inf")
+        baseline = 0.0          # running mean of fitness for REINFORCE
 
         best_dag = diff_dag.to_dag()
         best_fitness = eval_fn(model, best_dag)
@@ -170,22 +171,45 @@ class DifferentiableDAGSearch(DAGSearcher):
         for step in range(budget):
             diff_dag.train()
 
-            # Forward: get soft edge probabilities
-            h = diff_dag.acyclicity_penalty()
+            # Sample a DAG via Gumbel-Sigmoid and compute its edge probs.
+            # `probs` is the sigmoid of (theta + gumbel_noise)/tau and IS
+            # differentiable w.r.t. theta.
+            probs = diff_dag.get_edge_probs(hard=False)
+            # Hard sample (straight-through)
+            hard = (probs > 0.5).float()
+            current_adj = (hard - probs).detach() + probs  # (L, L), grad to theta
+            current_dag = TokenDAG(current_adj.detach().bool())
 
-            # Task evaluation with current hard DAG
-            current_dag = diff_dag.to_dag()
+            # Evaluate fitness of the sampled DAG (non-differentiable)
             fitness = eval_fn(model, current_dag)
+            fitness_t = torch.as_tensor(
+                float(fitness), device=device, dtype=probs.dtype,
+            )
 
-            # Augmented Lagrangian loss
-            # We minimize negative fitness + constraint
-            loss = -fitness + lmbda * h + (rho / 2) * h * h
+            # REINFORCE surrogate — log-prob of the sampled Bernoulli edges
+            # Higher-than-baseline fitness → push probs toward the sample
+            eps = 1e-8
+            log_probs = (
+                hard * torch.log(probs + eps)
+                + (1.0 - hard) * torch.log(1.0 - probs + eps)
+            )
+            log_prob_sum = log_probs.sum()
+
+            advantage = fitness_t - baseline
+            policy_loss = -(advantage * log_prob_sum)
+
+            # Acyclicity constraint (fully differentiable)
+            h = diff_dag.acyclicity_penalty()
+            h_loss = lmbda * h + (rho / 2) * h * h
+
+            loss = policy_loss + h_loss
 
             optimizer.zero_grad()
-            # h is differentiable; fitness may not be — use h gradient only
-            h_loss = lmbda * h + (rho / 2) * h * h
-            h_loss.backward()
+            loss.backward()
             optimizer.step()
+
+            # Update baseline (EMA)
+            baseline = 0.9 * baseline + 0.1 * float(fitness)
 
             # Update Lagrangian multipliers
             h_val = h.item()

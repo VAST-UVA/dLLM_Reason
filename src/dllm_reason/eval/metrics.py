@@ -26,10 +26,18 @@ def f1_score(prediction: str, ground_truth: str) -> float:
 
 
 def normalize_answer(s: str) -> str:
-    """Lowercase, remove punctuation, articles, and extra whitespace."""
+    """Lowercase, remove punctuation, articles, and extra whitespace.
+
+    Note: ``-``, ``.`` and ``/`` are preserved so that negative numbers,
+    decimals and fractions (``-42``, ``1.5``, ``1/2``) survive normalisation.
+    Previously the naïve ``string.punctuation`` strip corrupted every
+    math / numerical answer (bug C20).
+    """
     s = s.lower()
     s = re.sub(r"\b(a|an|the)\b", " ", s)
-    s = s.translate(str.maketrans("", "", string.punctuation))
+    # Strip punctuation except - . / which are meaningful in numbers
+    drop = "".join(ch for ch in string.punctuation if ch not in "-./")
+    s = s.translate(str.maketrans("", "", drop))
     s = " ".join(s.split())
     return s
 

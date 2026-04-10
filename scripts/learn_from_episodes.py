@@ -211,12 +211,19 @@ def run_sft(
     import torch.nn.functional as F
 
     dataset = SFTEpisodeDataset(episodes, tokenizer, max_length=args.max_length)
+    # Resolve pad token id from the tokenizer — previously hard-coded to 0
+    # which silently mis-tagged the <unk> token as padding (bug C17.1).
+    pad_id = (
+        tokenizer.pad_token_id
+        if getattr(tokenizer, "pad_token_id", None) is not None
+        else (tokenizer.eos_token_id if getattr(tokenizer, "eos_token_id", None) is not None else 0)
+    )
     loader = DataLoader(
         dataset,
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=0,
-        collate_fn=_sft_collate,
+        collate_fn=lambda batch: _sft_collate(batch, pad_id=pad_id),
     )
 
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
@@ -239,21 +246,32 @@ def run_sft(
     for epoch in range(args.epochs):
         total_loss = 0.0
         for batch in loader:
-            input_ids  = batch["input_ids"].to(device)   # (B, L)
-            prompt_mask= batch["prompt_mask"].to(device)  # (B, L) bool
+            input_ids     = batch["input_ids"].to(device)      # (B, L)
+            prompt_mask   = batch["prompt_mask"].to(device)    # (B, L) bool
+            attention_mask = batch["attention_mask"].to(device)  # (B, L) bool
             B, L = input_ids.shape
 
             # Sample uniform noise timestep
             t = torch.rand(B, device=device)
             x_t = model.noise_input(input_ids, t)         # masked version
 
-            output = model.forward(x_t, t)
+            # Pass attention_mask so the model can ignore padding positions
+            # (bug C17.3).
+            try:
+                output = model.forward(x_t, t, attention_mask=attention_mask)
+            except TypeError:
+                # Older backbones don't accept attention_mask — fall back.
+                output = model.forward(x_t, t)
             logits = output.logits  # (B, L, V)
 
-            # CE loss only on generation positions (not prompt)
-            gen_mask = ~prompt_mask  # (B, L)
+            # CE loss only on generation positions that are NOT padding.
+            # Previously `gen_mask = ~prompt_mask` included padding tokens
+            # and inflated the loss denominator (bug C17.2).
+            gen_mask = (~prompt_mask) & attention_mask  # (B, L)
             logits_flat  = logits[gen_mask]        # (N, V)
             targets_flat = input_ids[gen_mask]     # (N,)
+            if logits_flat.numel() == 0:
+                continue  # empty batch guard
             loss = F.cross_entropy(logits_flat, targets_flat)
 
             optimizer.zero_grad()
@@ -277,19 +295,39 @@ def run_sft(
     _save_model(model, tokenizer, args.output_dir)
 
 
-def _sft_collate(batch: list[dict]) -> dict[str, torch.Tensor]:
-    """Pad a list of SFT items to the same length."""
+def _sft_collate(batch: list[dict], pad_id: int = 0) -> dict[str, torch.Tensor]:
+    """Pad a list of SFT items to the same length.
+
+    Previously ``pad_id`` was hard-coded to 0 which often collided with the
+    ``<unk>`` id (bug C17.1). It is now supplied by the caller. An
+    ``attention_mask`` is also returned so downstream training can ignore
+    padding positions (bugs C17.2, C17.3).
+    """
     max_len = max(b["input_ids"].shape[0] for b in batch)
-    pad_id = 0
-    input_ids   = torch.stack([
-        torch.nn.functional.pad(b["input_ids"],   (0, max_len - b["input_ids"].shape[0]),   value=pad_id)
-        for b in batch
-    ])
-    prompt_mask = torch.stack([
-        torch.nn.functional.pad(b["prompt_mask"], (0, max_len - b["prompt_mask"].shape[0]), value=False)
-        for b in batch
-    ])
-    return {"input_ids": input_ids, "prompt_mask": prompt_mask}
+
+    input_ids = []
+    prompt_mask = []
+    attention_mask = []
+    for b in batch:
+        pad_len = max_len - b["input_ids"].shape[0]
+        input_ids.append(torch.nn.functional.pad(
+            b["input_ids"], (0, pad_len), value=pad_id,
+        ))
+        prompt_mask.append(torch.nn.functional.pad(
+            b["prompt_mask"], (0, pad_len), value=False,
+        ))
+        # True on real tokens, False on padding
+        am = torch.cat([
+            torch.ones(b["input_ids"].shape[0], dtype=torch.bool),
+            torch.zeros(pad_len, dtype=torch.bool),
+        ])
+        attention_mask.append(am)
+
+    return {
+        "input_ids":      torch.stack(input_ids),
+        "prompt_mask":    torch.stack(prompt_mask),
+        "attention_mask": torch.stack(attention_mask),
+    }
 
 
 # ── GRPO training loop ────────────────────────────────────────────────────────

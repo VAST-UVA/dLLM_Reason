@@ -7,6 +7,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import networkx as nx
+import torch
 
 from dllm_reason.graph.dag import TokenDAG
 

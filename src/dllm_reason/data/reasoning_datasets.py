@@ -58,8 +58,16 @@ class ReasoningDataset(Dataset):
             return_tensors="pt",
         )
 
-        # Compute prompt mask (question part only)
-        prompt_text = f"Q: {question}\nA: "
+        # Compute prompt mask from the SAME template so callers that pass
+        # a custom ``prompt_template`` still get the correct prompt length.
+        # Previously this was hard-coded as "Q: {question}\nA: " which
+        # mis-placed the prompt mask whenever the template differed from
+        # the default (bug C18).
+        if "{answer}" in self.prompt_template:
+            prefix_tpl = self.prompt_template.split("{answer}")[0]
+        else:
+            prefix_tpl = self.prompt_template
+        prompt_text = prefix_tpl.format(question=question, answer="")
         prompt_encoding = self.tokenizer(prompt_text, return_tensors="pt")
         prompt_len = min(prompt_encoding["input_ids"].shape[1], self.max_seq_len)
 
