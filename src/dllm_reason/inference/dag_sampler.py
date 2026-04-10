@@ -50,31 +50,24 @@ class DAGSampler:
     @torch.no_grad()
     def sample(
         self,
-        batch_size: int = 1,
-        seq_len: int | None = None,
-        prompt_ids: torch.Tensor | None = None,
-        prompt_mask: torch.Tensor | None = None,
+        prompt_ids: torch.Tensor,
+        prompt_mask: torch.Tensor,
+        gen_length: int,
         device: torch.device | str | None = None,
     ) -> SamplingResult:
-        seq_len = seq_len or self.model.max_seq_len
-        device = device or self.model.device
+        device = device or prompt_ids.device
+        batch_size = prompt_ids.shape[0]
+        seq_len = prompt_ids.shape[1]
         cfg = self.config
 
         self.model.eval()
 
         # Pre-compute schedule from DAG
         schedule = self.dag.to_mask_schedule(cfg.num_steps)
-        total_levels = len([s for s in schedule if s])  # non-empty levels
 
         # Initialize
-        x_t = torch.full((batch_size, seq_len), self.model.mask_token_id, dtype=torch.long, device=device)
-
-        if prompt_ids is not None:
-            x_t = prompt_ids.clone().to(device)
-        if prompt_mask is None:
-            prompt_mask = torch.zeros(batch_size, seq_len, dtype=torch.bool, device=device)
-        else:
-            prompt_mask = prompt_mask.to(device)
+        x_t = prompt_ids.clone().to(device)
+        prompt_mask = prompt_mask.to(device)
 
         is_unmasked = (x_t != self.model.mask_token_id) | prompt_mask
 
@@ -92,13 +85,13 @@ class DAGSampler:
                 # Refinement step: re-predict all positions but don't change unmasking
                 continue
 
-            # Timestep
-            t_val = 1.0 - step / cfg.num_steps
-            t = torch.full((batch_size,), t_val, device=device)
+            # Timestep: 1.0 (fully masked) → 0.0 (clean)
+            t_val = 1.0 - step / max(cfg.num_steps, 1)
+            t = torch.full((batch_size,), t_val, device=device, dtype=torch.float32)
 
             # Model prediction
             output = self.model.forward(x_t, t)
-            logits = output.logits / cfg.temperature
+            logits = output.logits / max(cfg.temperature, 1e-6)
             probs = torch.softmax(logits, dim=-1)
 
             # Create mask for positions to unmask
@@ -117,10 +110,13 @@ class DAGSampler:
                 drop = torch.rand_like(pos_mask.float()) > 0.5
                 pos_mask = pos_mask & ~drop
 
-            # Sample tokens for selected positions
+            # Sample tokens — exclude mask token so positions can't be sampled back to mask
             if pos_mask.any():
+                probs_sample = probs.clone()
+                probs_sample[..., self.model.mask_token_id] = 0.0
+                probs_sample = probs_sample / probs_sample.sum(dim=-1, keepdim=True).clamp(min=1e-9)
                 sampled = torch.multinomial(
-                    probs.view(-1, self.model.vocab_size), num_samples=1
+                    probs_sample.view(-1, probs_sample.shape[-1]), num_samples=1
                 ).view(batch_size, seq_len)
                 x_t = torch.where(pos_mask, sampled, x_t)
                 is_unmasked = is_unmasked | pos_mask
@@ -129,29 +125,29 @@ class DAGSampler:
                 trajectory.append(x_t.clone())
 
         # Refinement: re-predict and resample uncertain positions
+        t_refine = torch.zeros(batch_size, device=device, dtype=torch.float32)
         for _ in range(cfg.refinement_steps):
-            t = torch.full((batch_size,), 0.01, device=device)
-            output = self.model.forward(x_t, t)
-            probs = torch.softmax(output.logits / cfg.temperature, dim=-1)
+            output = self.model.forward(x_t, t_refine)
+            probs = torch.softmax(output.logits / max(cfg.temperature, 1e-6), dim=-1)
             confidences = probs.max(dim=-1).values
 
-            # Re-sample positions with low confidence (not prompt)
             low_conf = (confidences < 0.8) & ~prompt_mask
             if low_conf.any():
+                probs_sample = probs.clone()
+                probs_sample[..., self.model.mask_token_id] = 0.0
+                probs_sample = probs_sample / probs_sample.sum(dim=-1, keepdim=True).clamp(min=1e-9)
                 sampled = torch.multinomial(
-                    probs.view(-1, self.model.vocab_size), num_samples=1
+                    probs_sample.view(-1, probs_sample.shape[-1]), num_samples=1
                 ).view(batch_size, seq_len)
                 x_t = torch.where(low_conf, sampled, x_t)
 
-        # Final cleanup: unmask any remaining
+        # Final cleanup: force-fill remaining mask tokens with argmax
         remaining = (x_t == self.model.mask_token_id) & ~prompt_mask
         if remaining.any():
-            t = torch.full((batch_size,), 0.0, device=device)
-            output = self.model.forward(x_t, t)
-            probs = torch.softmax(output.logits / cfg.temperature, dim=-1)
-            sampled = torch.multinomial(
-                probs.view(-1, self.model.vocab_size), num_samples=1
-            ).view(batch_size, seq_len)
-            x_t = torch.where(remaining, sampled, x_t)
+            t_zero = torch.zeros(batch_size, device=device, dtype=torch.float32)
+            output = self.model.forward(x_t, t_zero)
+            final_logits = output.logits.clone()
+            final_logits[..., self.model.mask_token_id] = -float("inf")
+            x_t = torch.where(remaining, final_logits.argmax(dim=-1), x_t)
 
         return SamplingResult(sequences=x_t, trajectory=trajectory)

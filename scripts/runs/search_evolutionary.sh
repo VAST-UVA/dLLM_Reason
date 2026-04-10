@@ -14,7 +14,7 @@
 #   --population_size  population size              (default: 20)
 #   --mutation_rate    mutation probability          (default: 0.3)
 #   --fitness          accuracy|perplexity|combined (default: accuracy)
-#   --init_dag         empty|cot|skeleton|linear    (default: cot)
+#   --init_dag         cot|skeleton|linear          (default: cot)
 #   --seq_len          generation length            (default: 256)
 set -e
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

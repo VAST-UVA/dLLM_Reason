@@ -100,14 +100,14 @@ class SpanDAG:
         return cls(adj, span_size, seq_len, prompt_len)
 
     @classmethod
-    def empty(
+    def no_edges(
         cls,
         seq_len: int,
         span_size: int = 8,
         prompt_len: int = 0,
         device: torch.device | str = "cpu",
     ) -> "SpanDAG":
-        """Empty SpanDAG with no edges."""
+        """SpanDAG with no edges (all spans independent)."""
         gen_len = seq_len - prompt_len
         num_spans = math.ceil(gen_len / span_size)
         adj = torch.zeros(num_spans, num_spans, dtype=torch.bool, device=device)

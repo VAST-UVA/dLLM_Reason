@@ -115,8 +115,19 @@ class D3PM(DiffusionLM):
             keep_prob = alpha_bar[:, None].expand_as(x_0)
             uniform_prob = (1.0 - keep_prob) / self.vocab_size
             # With probability keep_prob stay, otherwise sample uniformly
+            # over real tokens (exclude the absorbing MASK id so that the
+            # uniform-noise branch does not accidentally produce tokens that
+            # look masked — bug C8).
             mask = torch.rand_like(keep_prob.float()) > keep_prob
-            random_tokens = torch.randint(0, self.vocab_size, x_0.shape, device=x_0.device)
+            random_tokens = torch.randint(
+                0, self.vocab_size - 1, x_0.shape, device=x_0.device,
+            )
+            # Shift ids ≥ mask_token_id up by 1 to skip the mask token exactly.
+            random_tokens = torch.where(
+                random_tokens >= self.mask_token_id,
+                random_tokens + 1,
+                random_tokens,
+            )
             x_t = torch.where(mask, random_tokens, x_0)
         else:
             raise ValueError(f"Unknown transition type: {self.transition_type}")

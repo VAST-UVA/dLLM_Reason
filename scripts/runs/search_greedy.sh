@@ -12,7 +12,7 @@
 #   --dataset      gsm8k|math|arc|prontoqa   (default: gsm8k)
 #   --budget       number of DAG evaluations  (default: 100)
 #   --fitness      accuracy|perplexity|combined (default: accuracy)
-#   --init_dag     empty|cot|skeleton|linear  (default: empty)
+#   --init_dag     cot|skeleton|linear        (default: cot)
 #   --seq_len      generation length          (default: 256)
 #   --fitness_samples  samples per evaluation (default: 50)
 set -e

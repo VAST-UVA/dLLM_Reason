@@ -1,6 +1,6 @@
 """Greedy edge search for DAG structure optimization.
 
-Starts from an initial DAG (empty or template) and greedily adds/removes
+Starts from an initial DAG (no_edges or template) and greedily adds/removes
 edges that improve the fitness function.
 
 Supports optional DAG Library integration for initialization and writeback.
@@ -35,16 +35,49 @@ class GreedyEdgeSearch(DAGSearcher):
     def __init__(
         self,
         initial_dag: TokenDAG | None = None,
+        init_templates: list[str] | None = None,
         num_candidates: int = 10,
         patience: int = 5,
         library: Optional["DAGStore"] = None,
         task_description: str = "",
     ):
+        """
+        Args:
+            initial_dag:    Explicit starting DAG.  Takes priority over templates.
+            init_templates: Names from ``TEMPLATE_NAMES``.  When provided and
+                            ``initial_dag`` is None, the searcher evaluates all
+                            listed templates and starts from the best one (costs
+                            len(init_templates) evaluations from the budget).
+                            Pass ``None`` to skip template warm-start entirely.
+        """
         self.initial_dag = initial_dag
+        self.init_templates = init_templates
         self.num_candidates = num_candidates
         self.patience = patience
         self.library = library
         self.task_description = task_description
+
+    def _pick_best_template(
+        self,
+        model,
+        eval_fn,
+        seq_len: int,
+    ) -> tuple[TokenDAG, float, int]:
+        """Evaluate all init_templates and return the best one.
+
+        Returns:
+            (best_dag, best_fitness, evals_used)
+        """
+        from dllm_reason.graph.templates import build_all_templates
+        templates = build_all_templates(seq_len, device=model.device,
+                                        names=self.init_templates)
+        best_dag, best_fit = None, -float("inf")
+        for name, dag in templates.items():
+            fit = eval_fn(model, dag)
+            logger.info(f"Template warm-start: {name} → fitness={fit:.4f}")
+            if fit > best_fit:
+                best_dag, best_fit = dag, fit
+        return best_dag, best_fit, len(templates)
 
     def search(
         self,
@@ -54,28 +87,47 @@ class GreedyEdgeSearch(DAGSearcher):
         budget: int = 100,
         **kwargs,
     ) -> SearchResult:
-        # Initialize
-        current_dag = self.initial_dag or TokenDAG.empty(seq_len, device=model.device)
-        current_fitness = eval_fn(model, current_dag)
+        # --- Initialize starting point ---
+        evals_done = 0
+        if self.initial_dag is not None:
+            # Explicit seed
+            current_dag = self.initial_dag
+            current_fitness = eval_fn(model, current_dag)
+            evals_done += 1
+        elif self.init_templates:
+            # Warm-start: evaluate all templates, pick best
+            current_dag, current_fitness, n = self._pick_best_template(
+                model, eval_fn, seq_len
+            )
+            evals_done += n
+            logger.info(
+                f"Template warm-start complete: best fitness={current_fitness:.4f} "
+                f"({current_dag.num_edges()} edges), used {n}/{budget} budget"
+            )
+        else:
+            current_dag = TokenDAG.no_edges(seq_len, device=model.device)
+            current_fitness = eval_fn(model, current_dag)
+            evals_done += 1
 
         best_dag = current_dag
         best_fitness = current_fitness
-        history = [{"fitness": current_fitness, "edges": current_dag.num_edges(), "step": 0}]
+        history = [{"fitness": current_fitness, "edges": current_dag.num_edges(),
+                    "step": evals_done}]
 
         no_improve = 0
-        step = 0
 
-        while step < budget and no_improve < self.patience:
+        while evals_done < budget and no_improve < self.patience:
             candidates = self._generate_candidates(current_dag)
             improved = False
 
             for candidate_dag in candidates:
-                step += 1
-                if step >= budget:
+                if evals_done >= budget:
                     break
 
                 fitness = eval_fn(model, candidate_dag)
-                history.append({"fitness": fitness, "edges": candidate_dag.num_edges(), "step": step})
+                evals_done += 1
+                history.append({"fitness": fitness, "edges": candidate_dag.num_edges(),
+                                 "step": evals_done})
 
                 if fitness > best_fitness:
                     best_dag = candidate_dag
@@ -84,7 +136,10 @@ class GreedyEdgeSearch(DAGSearcher):
                     current_fitness = fitness
                     improved = True
                     no_improve = 0
-                    logger.info(f"Step {step}: improved to {fitness:.4f} ({candidate_dag.num_edges()} edges)")
+                    logger.info(
+                        f"Step {evals_done}: improved to {fitness:.4f} "
+                        f"({candidate_dag.num_edges()} edges)"
+                    )
                     break
 
             if not improved:
@@ -94,7 +149,7 @@ class GreedyEdgeSearch(DAGSearcher):
             best_dag=best_dag,
             best_fitness=best_fitness,
             history=history,
-            metadata={"method": "greedy", "total_steps": step},
+            metadata={"method": "greedy", "total_steps": evals_done},
         )
 
         # Write back to library

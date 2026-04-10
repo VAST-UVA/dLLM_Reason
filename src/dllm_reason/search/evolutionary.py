@@ -46,15 +46,28 @@ class EvolutionarySearch(DAGSearcher):
         mutation_rate: float = 0.3,
         crossover_rate: float = 0.5,
         initial_dags: list[TokenDAG] | None = None,
+        init_templates: list[str] | None = None,
         library: Optional["DAGStore"] = None,
         library_config: Optional["LibraryConfig"] = None,
         task_description: str = "",
     ):
+        """
+        Args:
+            initial_dags:    Explicit list of seed DAGs (added before templates).
+            init_templates:  Names from ``TEMPLATE_NAMES`` to include in the
+                             initial population.  Pass ``None`` to use a compact
+                             default set; pass ``[]`` to disable templates entirely
+                             (population filled with random DAGs only).
+                             Default set: ["cot", "skeleton", "bidirectional",
+                             "answer_first"].
+        """
         self.population_size = population_size
         self.elite_fraction = elite_fraction
         self.mutation_rate = mutation_rate
         self.crossover_rate = crossover_rate
         self.initial_dags = initial_dags or []
+        # None → use default set; [] → no templates
+        self.init_templates: list[str] | None = init_templates
         self.library = library
         self.library_config = library_config
         self.task_description = task_description
@@ -139,18 +152,45 @@ class EvolutionarySearch(DAGSearcher):
 
         return result
 
-    def _init_population(self, seq_len: int, device) -> list[TokenDAG]:
-        """Initialize population from library seeds + initial DAGs + random ones."""
-        pop = list(self.initial_dags)
+    # Default templates used when init_templates=None
+    _DEFAULT_TEMPLATES = ["cot", "skeleton", "bidirectional", "answer_first"]
 
-        # Seed from library if available
+    def _init_population(self, seq_len: int, device) -> list[TokenDAG]:
+        """Initialize population: explicit seeds → library → templates → random.
+
+        Priority order (earlier sources take slots first):
+        1. ``initial_dags``  passed at construction
+        2. Library-retrieved DAGs (if library configured)
+        3. Named templates (``init_templates`` list or default set)
+        4. Random DAGs to fill remaining slots
+        """
+        pop: list[TokenDAG] = list(self.initial_dags)
+
+        # 1. Library seeds
         if self.library is not None and self.library_config is not None:
             library_dags = self._seed_from_library(seq_len, device)
             pop.extend(library_dags)
             if library_dags:
                 logger.info(f"Seeded {len(library_dags)} DAGs from library")
 
-        # Fill remaining slots with random DAGs
+        # 2. Template seeds
+        template_names = (
+            self._DEFAULT_TEMPLATES
+            if self.init_templates is None
+            else self.init_templates
+        )
+        if template_names and len(pop) < self.population_size:
+            from dllm_reason.graph.templates import build_all_templates
+            templates = build_all_templates(seq_len, device=device, names=template_names)
+            slots_left = self.population_size - len(pop)
+            selected = list(templates.values())[:slots_left]
+            pop.extend(selected)
+            logger.info(
+                f"Seeded {len(selected)} template DAGs "
+                f"({list(templates.keys())[:len(selected)]})"
+            )
+
+        # 3. Random DAGs to fill remaining slots
         while len(pop) < self.population_size:
             from dllm_reason.graph.templates import random_dag
             density = random.uniform(0.01, 0.2)

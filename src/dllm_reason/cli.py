@@ -45,29 +45,22 @@ def _run(script: str) -> None:
     sys.exit(subprocess.call([sys.executable, str(scripts_dir / script)] + sys.argv[1:]))
 
 
-def train():
-    _run("train.py")
+def train():               _run("train.py")
+def evaluate():            _run("evaluate.py")
+def eval_dags():           _run("eval_dags.py")
+def search_dag():          _run("search_dag.py")
+def visualize_dag():       _run("visualize_dag.py")
+def serve():               _run("serve.py")
+def webui():               _run("webui.py")
 
-
-def evaluate():
-    _run("evaluate.py")
-
-
-def eval_dags():
-    _run("eval_dags.py")
-
-
-def search_dag():
-    _run("search_dag.py")
-
-
-def visualize_dag():
-    _run("visualize_dag.py")
-
-
-def serve():
-    _run("serve.py")
-
-
-def webui():
-    _run("webui.py")
+# ── v1.4.2 additions ──────────────────────────────────────────────────────────
+def run_pipeline():        _run("run_pipeline.py")
+def collect_episodes():    _run("collect_episodes.py")
+def learn_from_episodes(): _run("learn_from_episodes.py")
+def manage_library():      _run("manage_library.py")
+def benchmark_schedulers():_run("benchmark_schedulers.py")
+def analyze_dag():         _run("analyze_dag.py")
+def inspect_episodes():    _run("inspect_episodes.py")
+def generate_templates():  _run("generate_templates.py")
+def add_feedback():        _run("add_feedback.py")
+def merge_dags():          _run("merge_dags.py")

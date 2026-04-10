@@ -385,10 +385,6 @@ strategies = [
      "Left-to-right sequential unmasking.\n"
      "Mimics autoregressive generation order.\n"
      "Uses LinearScheduler."),
-    ("empty",         MGRAY,  "scripts/runs/empty.sh",
-     "No structural constraint — purely random order.\n"
-     "Standard LLaDA generation as-is.\n"
-     "Uses RandomScheduler (same as 'random')."),
     ("cot",           ORANGE, "scripts/runs/cot.sh",
      "Chain-of-Thought DAG: cot_steps segments.\n"
      "Each segment depends on all prior segments.\n"
@@ -630,12 +626,11 @@ run_scripts = [
     ("confidence.sh",     BLUE,   "Highest-confidence first (LLaDA default)"),
     ("random.sh",         PURPLE, "Uniform random unmasking (stochastic baseline)"),
     ("linear.sh",         ACCENT, "Left-to-right sequential unmasking"),
-    ("empty.sh",          MGRAY,  "No constraint — pure standard LLaDA"),
     ("cot.sh",            ORANGE, "Chain-of-Thought DAG   (--cot_steps N)"),
     ("skeleton.sh",       GREEN,  "Skeleton-then-Detail DAG"),
     ("bidirectional.sh",  BLUE,   "Bidirectional DAG (both ends → center)"),
     ("answer_first.sh",   RED,    "Answer region unmasked before reasoning"),
-    ("all_strategies.sh", YELLOW, "All 8 strategies in one run → single summary.json"),
+    ("all_strategies.sh", YELLOW, "All 7 strategies in one run → single summary.json"),
     ("save_outputs.sh",   ACCENT, "Any strategy + --save_outputs + commented options"),
 ]
 

@@ -6,6 +6,22 @@ These templates are used as:
 1. Hand-designed baselines for comparison
 2. Starting points for DAG search optimization
 3. Interpretable reasoning strategies for analysis
+
+Quick reference
+---------------
+build_all_templates(seq_len, device)
+    Returns a dict[str, TokenDAG] of every available template for
+    the given seq_len.  Use this to seed search populations.
+
+Available template names
+    "cot"          chain_of_thought_dag     — sequential reasoning steps
+    "answer_first" answer_first_dag         — answer then reasoning
+    "skeleton"     skeleton_then_detail_dag — structure then fill
+    "bidirectional" bidirectional_dag       — outside-in unmasking
+    "interleaved"  interleaved_dag          — alternating groups
+    "linear"       TokenDAG.linear_chain    — strict left-to-right AR
+    "random_low"   random_dag(density=0.05) — sparse random
+    "random_high"  random_dag(density=0.15) — denser random
 """
 
 from __future__ import annotations
@@ -200,6 +216,18 @@ def random_dag(
     return TokenDAG(adj)
 
 
+def linear_chain_dag(
+    seq_len: int,
+    prompt_len: int = 0,
+    device: torch.device | str = "cpu",
+) -> TokenDAG:
+    """Strict left-to-right chain: position i → i+1 for all gen positions.
+
+    Equivalent to autoregressive generation.
+    """
+    return TokenDAG.linear_chain(seq_len, device=device)
+
+
 def interleaved_dag(
     seq_len: int,
     num_groups: int = 2,
@@ -227,3 +255,83 @@ def interleaved_dag(
     levels.extend(groups)
 
     return TokenDAG.from_levels(levels, seq_len=seq_len, device=device)
+
+
+# ── Template registry & helpers ───────────────────────────────────────────────
+
+#: All named templates.  Each value is a callable(seq_len, device) -> TokenDAG.
+#: Parameters beyond seq_len/device use their defaults (good for search seeding).
+_TEMPLATE_BUILDERS: dict[str, callable] = {
+    "cot":           lambda n, d: chain_of_thought_dag(n, num_steps=4, device=d),
+    "answer_first":  lambda n, d: answer_first_dag(
+                         n,
+                         answer_positions=list(range(max(1, int(n * 0.8)), n)),
+                         device=d,
+                     ),
+    "skeleton":      lambda n, d: skeleton_then_detail_dag(
+                         n,
+                         skeleton_positions=list(range(0, n, 3)),
+                         detail_positions=list(range(1, n, 3)),
+                         device=d,
+                     ),
+    "bidirectional": lambda n, d: bidirectional_dag(n, num_segments=4, device=d),
+    "interleaved":   lambda n, d: interleaved_dag(n, num_groups=2, device=d),
+    "linear":        lambda n, d: linear_chain_dag(n, device=d),
+    "random_low":    lambda n, d: random_dag(n, density=0.05, device=d),
+    "random_high":   lambda n, d: random_dag(n, density=0.15, device=d),
+}
+
+TEMPLATE_NAMES: list[str] = list(_TEMPLATE_BUILDERS.keys())
+
+
+def build_all_templates(
+    seq_len: int,
+    device: torch.device | str = "cpu",
+    names: list[str] | None = None,
+) -> dict[str, "TokenDAG"]:
+    """Build every (or a selected subset of) named templates.
+
+    Args:
+        seq_len: generation sequence length.
+        device:  target device for adjacency tensors.
+        names:   optional list of template names to build.
+                 Pass None (default) to get all templates.
+                 Use TEMPLATE_NAMES to see all available names.
+
+    Returns:
+        Ordered dict mapping name → TokenDAG.
+
+    Example
+    -------
+    >>> templates = build_all_templates(seq_len=128, device="cuda")
+    >>> for name, dag in templates.items():
+    ...     print(name, dag.num_edges())
+    """
+    selected = names if names is not None else TEMPLATE_NAMES
+    out: dict[str, TokenDAG] = {}
+    for name in selected:
+        if name not in _TEMPLATE_BUILDERS:
+            raise ValueError(
+                f"Unknown template {name!r}.  "
+                f"Available: {TEMPLATE_NAMES}"
+            )
+        out[name] = _TEMPLATE_BUILDERS[name](seq_len, device)
+    return out
+
+
+def build_template(
+    name: str,
+    seq_len: int,
+    device: torch.device | str = "cpu",
+) -> "TokenDAG":
+    """Build a single named template.
+
+    Equivalent to ``build_all_templates(seq_len, device, names=[name])[name]``
+    but slightly more convenient.
+    """
+    if name not in _TEMPLATE_BUILDERS:
+        raise ValueError(
+            f"Unknown template {name!r}.  "
+            f"Available: {TEMPLATE_NAMES}"
+        )
+    return _TEMPLATE_BUILDERS[name](seq_len, device)

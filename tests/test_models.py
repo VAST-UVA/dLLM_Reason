@@ -107,13 +107,17 @@ class TestSampling:
         from dllm_reason.scheduler.random_scheduler import RandomScheduler
         from dllm_reason.inference.sampler import DiffusionSampler, SamplingConfig
 
+        B = 2
+        prompt_ids = torch.full((B, SEQ_LEN), mdlm.mask_token_id, dtype=torch.long)
+        prompt_mask = torch.zeros((B, SEQ_LEN), dtype=torch.bool)
+
         scheduler = RandomScheduler()
         sampler = DiffusionSampler(
             mdlm, scheduler,
             SamplingConfig(num_steps=4, show_progress=False),
         )
-        result = sampler.sample(batch_size=2, seq_len=SEQ_LEN)
-        assert result.sequences.shape == (2, SEQ_LEN)
+        result = sampler.sample(prompt_ids=prompt_ids, prompt_mask=prompt_mask, gen_length=SEQ_LEN)
+        assert result.sequences.shape == (B, SEQ_LEN)
         # No MASK tokens in output
         assert (result.sequences != mdlm.mask_token_id).all()
 
@@ -122,13 +126,16 @@ class TestSampling:
         from dllm_reason.scheduler.dag_scheduler import DAGScheduler
         from dllm_reason.inference.sampler import DiffusionSampler, SamplingConfig
 
+        prompt_ids = torch.full((1, SEQ_LEN), mdlm.mask_token_id, dtype=torch.long)
+        prompt_mask = torch.zeros((1, SEQ_LEN), dtype=torch.bool)
+
         dag = TokenDAG.linear_chain(SEQ_LEN)
         scheduler = DAGScheduler(dag, sub_strategy="all_ready")
         sampler = DiffusionSampler(
             mdlm, scheduler,
             SamplingConfig(num_steps=SEQ_LEN, show_progress=False),
         )
-        result = sampler.sample(batch_size=1, seq_len=SEQ_LEN)
+        result = sampler.sample(prompt_ids=prompt_ids, prompt_mask=prompt_mask, gen_length=SEQ_LEN)
         assert result.sequences.shape == (1, SEQ_LEN)
 
 

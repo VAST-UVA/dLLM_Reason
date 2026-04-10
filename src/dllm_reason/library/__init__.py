@@ -1,5 +1,6 @@
 """DAG Library: persistent storage, retrieval, and feedback for DAG structures."""
 
+from dllm_reason.library.episode import DAGEpisode, EpisodeStore
 from dllm_reason.library.config import (
     LibraryConfig,
     RetrievalMode,
@@ -22,6 +23,8 @@ from dllm_reason.library.merge import DAGMerger, create_merger
 from dllm_reason.library.fitness import CompositeFitness, FitnessBreakdown
 
 __all__ = [
+    "DAGEpisode",
+    "EpisodeStore",
     "LibraryConfig",
     "RetrievalMode",
     "FusionStrategy",
