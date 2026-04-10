@@ -2,6 +2,7 @@
 
 > Version: v1.5.0  |  Last updated: 2026-04-09  |  Language: English  |  中文: [FEATURE_MANUAL.zh.md](FEATURE_MANUAL.zh.md)
 
+
 ## 0. Project Overview
 
 **dLLM-Reason** is a research framework for reasoning on top of discrete diffusion language models (dLLMs). Its core contribution is using a **TokenDAG** to constrain the partial order in which tokens are unmasked, explicitly injecting *reasoning dependencies* into the diffusion generation process.

@@ -768,7 +768,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # ── General ──
     p.add_argument("--stages", type=int, nargs="+", default=[1, 2, 3],
                     help="Which stages to run (default: 1 2 3)")
-    # 可选：1, 2, 3 任意组合
+    # Options: any combination of 1, 2, 3
     p.add_argument("--run_dir", type=str, default=None,
                     help="Output directory (default: runs/research_<timestamp>)")
     p.add_argument("--resume", action="store_true",
@@ -779,32 +779,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # ── Data ──
     p.add_argument("--datasets", type=str, nargs="+", default=["gsm8k"],
                     help="Datasets to evaluate on")
-    # 可选：gsm8k, math, arc, prontoqa, mmlu, hotpotqa, mbpp, humaneval, gpqa, aime
+    # Options: gsm8k, math, arc, prontoqa, mmlu, hotpotqa, mbpp, humaneval, gpqa, aime
     p.add_argument("--num_samples", type=int, default=200,
                     help="Samples per dataset (-1 = all)")
 
     # ── Inference parameters (sent to API) ──
     p.add_argument("--gen_length", type=int, default=128,
                     help="Generation length in tokens")
-    # 可选：64, 128, 256, 512
+    # Options: 64, 128, 256, 512
     p.add_argument("--num_steps", type=int, default=128,
                     help="Number of diffusion denoising steps")
-    # 可选：32, 64, 128, 256
+    # Options: 32, 64, 128, 256
     p.add_argument("--block_length", type=int, default=32,
                     help="Block length for block-wise denoising")
-    # 可选：8, 16, 32, 64
+    # Options: 8, 16, 32, 64
     p.add_argument("--temperature", type=float, default=0.0,
                     help="Sampling temperature (0.0 = greedy)")
-    # 可选：0.0, 0.3, 0.5, 0.7, 1.0
+    # Options: 0.0, 0.3, 0.5, 0.7, 1.0
     p.add_argument("--api_batch_size", type=int, default=4,
                     help="Prompts per /batch_generate call")
 
     # ── Stage 1: Baseline ──
     p.add_argument("--s1_schedulers", type=str, nargs="+", default=["confidence"],
                     help="Schedulers to evaluate in Stage 1")
-    # 可选：confidence, random, linear, entropy, semi_ar,
-    #       maskgit_cosine, critical_token_first, curriculum,
-    #       adaptive_dynamic, cot, skeleton, bidirectional, answer_first
+    # Options: confidence, random, linear, entropy, semi_ar,
+    #          maskgit_cosine, critical_token_first, curriculum,
+    #          adaptive_dynamic, cot, skeleton, bidirectional, answer_first
 
     # ── Stage 2: DAG Discovery ──
     p.add_argument("--s2_strategies", type=str, nargs="+",
@@ -814,7 +814,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--s2_method", type=str, default="sweep",
                     choices=["sweep", "search"],
                     help="DAG discovery method")
-    # 可选：sweep (try all templates), search (per-prompt search)
+    # Options: sweep (try all templates), search (per-prompt search)
     p.add_argument("--s2_search_method", type=str, default="greedy",
                     choices=["greedy", "evolutionary", "rl_policy", "differentiable"],
                     help="Search algorithm (only if --s2_method=search)")
@@ -827,44 +827,44 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--s3_mode", type=str, default="sft",
                     choices=["sft", "grpo", "diffppo", "unmask_rl"],
                     help="Training mode")
-    # 可选：sft (supervised fine-tuning on correct episodes)
-    #       grpo (Group Relative Policy Optimization)
-    #       diffppo (DiFFPO with optional step-budget controller)
-    #       unmask_rl (frozen LM + lightweight policy net via REINFORCE)
+    # Options: sft (supervised fine-tuning on correct episodes)
+    #          grpo (Group Relative Policy Optimization)
+    #          diffppo (DiFFPO with optional step-budget controller)
+    #          unmask_rl (frozen LM + lightweight policy net via REINFORCE)
     p.add_argument("--s3_dag_mode", type=str, default="per_template",
                     choices=["per_template", "consensus", "none"],
                     help="DAG injection mode")
-    # 可选：per_template (group by best template, train each group with its DAG)
-    #       consensus (majority-vote DAG from all correct episodes)
-    #       none (no DAG bias — ablation baseline)
+    # Options: per_template (group by best template, train each group with its DAG)
+    #          consensus (majority-vote DAG from all correct episodes)
+    #          none (no DAG bias — ablation baseline)
     p.add_argument("--epochs", type=int, default=3)
     p.add_argument("--batch_size", type=int, default=4)
     p.add_argument("--lr", type=float, default=1e-5,
                     help="Learning rate")
-    # 可选：1e-6 ~ 1e-4
+    # Options: 1e-6 ~ 1e-4
     p.add_argument("--dag_bias_strength", type=float, default=0.5,
                     help="DAG bias strength (0.0 = no bias, 1.0 = full bias)")
-    # 可选：0.0, 0.1, 0.3, 0.5, 0.8, 1.0
+    # Options: 0.0, 0.1, 0.3, 0.5, 0.8, 1.0
 
     # GRPO / DiFFPO parameters
     p.add_argument("--kl_coeff", type=float, default=0.01,
                     help="KL divergence coefficient (grpo/diffppo)")
-    # 可选：0.001, 0.005, 0.01, 0.02, 0.05, 0.1
+    # Options: 0.001, 0.005, 0.01, 0.02, 0.05, 0.1
     p.add_argument("--clip_ratio", type=float, default=0.2,
                     help="Clip ratio (grpo)")
     p.add_argument("--ppo_clip_eps", type=float, default=0.2,
                     help="PPO clip epsilon (diffppo)")
-    # 可选：0.1, 0.2, 0.3
+    # Options: 0.1, 0.2, 0.3
     p.add_argument("--train_sampler", action="store_true",
                     help="Joint train step-budget controller (diffppo only)")
 
     # UnmaskRL parameters
     p.add_argument("--unmask_group_size", type=int, default=4,
                     help="Group size for UnmaskRL")
-    # 可选：2, 4, 8
+    # Options: 2, 4, 8
     p.add_argument("--unmask_d_model", type=int, default=64,
                     help="Policy network hidden dimension (unmask_rl)")
-    # 可选：32, 64, 128, 256
+    # Options: 32, 64, 128, 256
 
     # Model precision
     p.add_argument("--torch_dtype", type=str, default="bfloat16",

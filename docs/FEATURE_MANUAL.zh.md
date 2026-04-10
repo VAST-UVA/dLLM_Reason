@@ -2,6 +2,7 @@
 
 > 版本：v1.5.0  |  最后更新：2026-04-09  |  语言：中文  |  English: [FEATURE_MANUAL.md](FEATURE_MANUAL.md)
 
+
 ## 0. 项目定位
 
 **dLLM-Reason** 是一个基于离散扩散语言模型（discrete diffusion LM, dLLM）的推理研究框架。其核心创新是用 **TokenDAG** 约束 token unmask 的偏序，从而把"推理依赖"显式地注入扩散生成过程。
