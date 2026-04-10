@@ -466,7 +466,7 @@ def main():
     )
     p.add_argument("--experiments", type=str, nargs="+", default=["all"],
                     help="Experiment names to run (default: all)")
-    # 可选：all, 或从 ABLATION_EXPERIMENTS 中选择实验名
+    # Options: "all", or select experiment names from ABLATION_EXPERIMENTS
     p.add_argument("--base_run_dir", type=str, default="runs/ablation",
                     help="Base directory for all ablation outputs")
     p.add_argument("--resume", action="store_true",
