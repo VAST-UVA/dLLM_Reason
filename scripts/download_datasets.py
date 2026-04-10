@@ -15,6 +15,9 @@ Usage:
 
     # List available datasets
     python scripts/download_datasets.py --list
+
+Resource metadata (repo_id, config, splits, etc.) is defined once in
+``dllm_reason.utils.resource_registry.DATASET_REGISTRY``.
 """
 
 import argparse
@@ -22,80 +25,22 @@ import os
 import sys
 from pathlib import Path
 
-# ── Dataset registry ────────────────────────────────────────────────────────
-
-DATASETS = {
-    # Training / reasoning evaluation
-    "gsm8k": {
-        "repo_id": "openai/gsm8k",
-        "config": "main",
-        "splits": ["train", "test"],
-        "description": "Grade School Math 8K — arithmetic reasoning",
-        "size": "~7MB",
-    },
-    "math": {
-        "repo_id": "hendrycks/competition_math",
-        "config": None,
-        "splits": ["train", "test"],
-        "description": "MATH — competition-level math problems",
-        "size": "~50MB",
-    },
-    "arc": {
-        "repo_id": "allenai/ai2_arc",
-        "config": "ARC-Challenge",
-        "splits": ["train", "test", "validation"],
-        "description": "ARC-Challenge — science reasoning (multiple choice)",
-        "size": "~1MB",
-    },
-    "prontoqa": {
-        "repo_id": "renma/ProntoQA",
-        "config": None,
-        "splits": ["train"],
-        "description": "ProntoQA — logical reasoning",
-        "size": "~2MB",
-    },
-    # Benchmark evaluation
-    "mbpp": {
-        "repo_id": "google-research-datasets/mbpp",
-        "config": "sanitized",
-        "splits": ["test", "train", "prompt"],
-        "description": "MBPP — basic Python programming problems",
-        "size": "~2MB",
-    },
-    "humaneval": {
-        "repo_id": "openai/openai_humaneval",
-        "config": None,
-        "splits": ["test"],
-        "description": "HumanEval — Python code generation",
-        "size": "~1MB",
-    },
-    "hotpotqa": {
-        "repo_id": "hotpot_qa",
-        "config": "distractor",
-        "splits": ["train", "validation"],
-        "description": "HotpotQA — multi-hop question answering",
-        "size": "~600MB",
-    },
-    "mmlu": {
-        "repo_id": "cais/mmlu",
-        "config": "all",
-        "splits": ["test", "validation"],
-        "description": "MMLU — massive multitask language understanding",
-        "size": "~4MB",
-    },
-}
-
-DEFAULT_OUTPUT = Path(__file__).resolve().parent.parent / "datasets"
+from dllm_reason.utils.resource_registry import (
+    DATASET_REGISTRY,
+    DatasetEntry,
+    DEFAULT_DATASETS_DIR,
+)
 
 
 def parse_args():
+    names = ", ".join(DATASET_REGISTRY.keys())
     parser = argparse.ArgumentParser(description="Download evaluation datasets")
     parser.add_argument(
         "--datasets", nargs="*", default=None,
-        help=f"Datasets to download. Available: {', '.join(DATASETS.keys())}. Default: all.",
+        help=f"Datasets to download. Available: {names}. Default: all.",
     )
     parser.add_argument(
-        "--output_dir", type=str, default=str(DEFAULT_OUTPUT),
+        "--output_dir", type=str, default=str(DEFAULT_DATASETS_DIR),
         help="Directory to save datasets (default: datasets/)",
     )
     parser.add_argument(
@@ -128,7 +73,7 @@ def split_exists(split_dir: Path) -> bool:
     return (split_dir / "dataset_info.json").exists()
 
 
-def download_dataset(name: str, info: dict, output_dir: Path,
+def download_dataset(entry: DatasetEntry, output_dir: Path,
                      token: str = None, force: bool = False):
     """Download a dataset via HuggingFace datasets library.
 
@@ -138,28 +83,29 @@ def download_dataset(name: str, info: dict, output_dir: Path,
     """
     from datasets import load_dataset
 
-    save_dir = output_dir / name
+    save_dir = output_dir / entry.local_name
     splits_needed = []
-    for split in info["splits"]:
+    for split in entry.splits:
         split_dir = save_dir / split
         if not force and split_exists(split_dir):
-            print(f"  [skip] {name}/{split} already exists at {split_dir}")
+            print(f"  [skip] {entry.local_name}/{split} already exists at {split_dir}")
         else:
             splits_needed.append(split)
 
     if not splits_needed:
-        print(f"[skip] {name} — all splits already downloaded")
+        print(f"[skip] {entry.local_name} — all splits already downloaded")
         return
 
-    print(f"\nDownloading {name} ({info['repo_id']}) — splits: {', '.join(splits_needed)} ...")
+    print(f"\nDownloading {entry.local_name} ({entry.repo_id}) "
+          f"— splits: {', '.join(splits_needed)} ...")
 
     for split in splits_needed:
         try:
             kwargs = {"split": split}
-            if info.get("config"):
-                ds = load_dataset(info["repo_id"], info["config"], **kwargs)
+            if entry.config:
+                ds = load_dataset(entry.repo_id, entry.config, **kwargs)
             else:
-                ds = load_dataset(info["repo_id"], **kwargs)
+                ds = load_dataset(entry.repo_id, **kwargs)
 
             split_dir = save_dir / split
             split_dir.mkdir(parents=True, exist_ok=True)
@@ -170,7 +116,7 @@ def download_dataset(name: str, info: dict, output_dir: Path,
             print(f"  Warning: could not download split '{split}': {e}")
             continue
 
-    print(f"Done: {name}")
+    print(f"Done: {entry.local_name}")
 
 
 def main():
@@ -179,10 +125,10 @@ def main():
     if args.list:
         print("\nAvailable datasets:")
         print("-" * 70)
-        for name, info in DATASETS.items():
-            print(f"  {name:<12} {info['description']}")
-            print(f"  {'':12} Repo: {info['repo_id']}, Size: {info['size']}")
-            print(f"  {'':12} Splits: {', '.join(info['splits'])}")
+        for name, entry in DATASET_REGISTRY.items():
+            print(f"  {name:<12} {entry.description}")
+            print(f"  {'':12} Repo: {entry.repo_id}, Size: {entry.size}")
+            print(f"  {'':12} Splits: {', '.join(entry.splits)}")
             print()
         return
 
@@ -196,12 +142,13 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    dataset_names = args.datasets if args.datasets else list(DATASETS.keys())
+    dataset_names = args.datasets if args.datasets else list(DATASET_REGISTRY.keys())
 
     # Validate names
     for name in dataset_names:
-        if name not in DATASETS:
-            print(f"Error: unknown dataset '{name}'. Available: {', '.join(DATASETS.keys())}")
+        if name not in DATASET_REGISTRY:
+            print(f"Error: unknown dataset '{name}'. "
+                  f"Available: {', '.join(DATASET_REGISTRY.keys())}")
             sys.exit(1)
 
     print(f"Output directory: {output_dir}")
@@ -211,7 +158,8 @@ def main():
     success, failed = [], []
     for name in dataset_names:
         try:
-            download_dataset(name, DATASETS[name], output_dir, token, force=args.force)
+            download_dataset(DATASET_REGISTRY[name], output_dir, token,
+                             force=args.force)
             success.append(name)
         except Exception as e:
             print(f"Error downloading {name}: {e}")

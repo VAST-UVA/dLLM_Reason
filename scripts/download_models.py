@@ -15,6 +15,9 @@ Usage:
 
     # List available models
     python scripts/download_models.py --list
+
+Resource metadata (repo_id, local name, description, size) is defined
+once in ``dllm_reason.utils.resource_registry.MODEL_REGISTRY``.
 """
 
 import argparse
@@ -22,32 +25,21 @@ import os
 import sys
 from pathlib import Path
 
-# ── Model registry ──────────────────────────────────────────────────────────
-
-MODELS = {
-    "llada-instruct": {
-        "repo_id": "GSAI-ML/LLaDA-8B-Instruct",
-        "description": "LLaDA 8B Instruct — main inference model",
-        "size": "~16GB (bf16)",
-    },
-    "llada-base": {
-        "repo_id": "GSAI-ML/LLaDA-8B-Base",
-        "description": "LLaDA 8B Base — for fine-tuning",
-        "size": "~16GB (bf16)",
-    },
-}
-
-DEFAULT_OUTPUT = Path(__file__).resolve().parent.parent / "checkpoints"
+from dllm_reason.utils.resource_registry import (
+    MODEL_REGISTRY,
+    DEFAULT_CHECKPOINTS_DIR,
+)
 
 
 def parse_args():
+    names = ", ".join(MODEL_REGISTRY.keys())
     parser = argparse.ArgumentParser(description="Download model checkpoints")
     parser.add_argument(
         "--models", nargs="*", default=None,
-        help=f"Models to download. Available: {', '.join(MODELS.keys())}. Default: all.",
+        help=f"Models to download. Available: {names}. Default: all.",
     )
     parser.add_argument(
-        "--output_dir", type=str, default=str(DEFAULT_OUTPUT),
+        "--output_dir", type=str, default=str(DEFAULT_CHECKPOINTS_DIR),
         help="Directory to save models (default: checkpoints/)",
     )
     parser.add_argument(
@@ -93,10 +85,10 @@ def main():
     if args.list:
         print("\nAvailable models:")
         print("-" * 60)
-        for name, info in MODELS.items():
-            print(f"  {name:<20} {info['description']}")
-            print(f"  {'':20} Repo: {info['repo_id']}")
-            print(f"  {'':20} Size: {info['size']}")
+        for name, entry in MODEL_REGISTRY.items():
+            print(f"  {name:<20} {entry.description}")
+            print(f"  {'':20} Repo: {entry.repo_id}")
+            print(f"  {'':20} Size: {entry.size}")
             print()
         return
 
@@ -107,12 +99,13 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    model_names = args.models if args.models else list(MODELS.keys())
+    model_names = args.models if args.models else list(MODEL_REGISTRY.keys())
 
     # Validate names
     for name in model_names:
-        if name not in MODELS:
-            print(f"Error: unknown model '{name}'. Available: {', '.join(MODELS.keys())}")
+        if name not in MODEL_REGISTRY:
+            print(f"Error: unknown model '{name}'. "
+                  f"Available: {', '.join(MODEL_REGISTRY.keys())}")
             sys.exit(1)
 
     print(f"Output directory: {output_dir}")
@@ -120,10 +113,10 @@ def main():
     print()
 
     for name in model_names:
-        info = MODELS[name]
-        local_dir = output_dir / name
+        entry = MODEL_REGISTRY[name]
+        local_dir = output_dir / entry.local_name
         try:
-            download_model(info["repo_id"], local_dir, token)
+            download_model(entry.repo_id, local_dir, token)
         except Exception as e:
             print(f"Error downloading {name}: {e}")
             print("You can retry with: python scripts/download_models.py "
@@ -135,7 +128,8 @@ def main():
     print(f"Models saved to: {output_dir}")
     print("\nTo use local checkpoints, set model_id in configs:")
     for name in model_names:
-        print(f"  {name}: {output_dir / name}")
+        entry = MODEL_REGISTRY[name]
+        print(f"  {name}: {output_dir / entry.local_name}")
 
 
 if __name__ == "__main__":
