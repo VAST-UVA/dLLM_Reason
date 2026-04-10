@@ -11,6 +11,16 @@ Adding a new resource
 2.  Datasets — add an entry to ``DATASET_REGISTRY``.
 That's it.  The download scripts, local-first resolver, and all
 loading sites will pick it up automatically.
+
+Local path priority
+-------------------
+Each entry has a ``local_path`` field.  If set to an existing directory,
+the resolver uses it directly — no download, no fallback.
+
+Resolution order (handled by ``local_resolve.py``):
+  1. ``entry.local_path``  (explicit user-specified path)
+  2. ``<default_dir>/<local_name>/``  (project-relative convention)
+  3. HuggingFace download  (remote fallback)
 """
 
 from __future__ import annotations
@@ -29,31 +39,38 @@ DEFAULT_DATASETS_DIR = PROJECT_ROOT / "datasets"
 
 # ── Model entry ───────────────────────────────────────────────────────────────
 
-@dataclass(frozen=True)
+@dataclass
 class ModelEntry:
     """Metadata for a downloadable model checkpoint.
 
     Attributes:
         local_name:  Directory name under ``checkpoints/`` (e.g. ``llada-instruct``).
         repo_id:     HuggingFace repo ID (e.g. ``GSAI-ML/LLaDA-8B-Instruct``).
+        local_path:  Explicit local path override. If set and exists, used first.
+                     Accepts str or Path. ``None`` means fall back to default
+                     ``checkpoints/<local_name>/``.
         description: Short human-readable description.
         size:        Approximate download size string.
     """
     local_name: str
     repo_id: str
+    local_path: Optional[str] = None
     description: str = ""
     size: str = ""
 
 
 # ── Dataset entry ─────────────────────────────────────────────────────────────
 
-@dataclass(frozen=True)
+@dataclass
 class DatasetEntry:
     """Metadata for a downloadable dataset.
 
     Attributes:
         local_name:  Directory name under ``datasets/`` (e.g. ``gsm8k``).
         repo_id:     HuggingFace dataset repo ID.
+        local_path:  Explicit local path override (directory containing splits).
+                     If set and the split subdirectory exists, used first.
+                     ``None`` means fall back to ``datasets/<local_name>/``.
         config:      HF dataset config / subset (e.g. ``"main"``, ``"ARC-Challenge"``).
                      None if the dataset has no configs.
         splits:      List of splits to download (e.g. ``["train", "test"]``).
@@ -62,6 +79,7 @@ class DatasetEntry:
     """
     local_name: str
     repo_id: str
+    local_path: Optional[str] = None
     config: Optional[str] = None
     splits: list[str] = field(default_factory=lambda: ["train", "test"])
     description: str = ""
@@ -70,6 +88,20 @@ class DatasetEntry:
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  MODEL REGISTRY — add new models here
+# ═════════════════════════════════════════════════════════════════════════════
+#
+#  To use a local checkpoint, set local_path:
+#
+#    MODEL_REGISTRY["llada-instruct"].local_path = "/data/models/llada-8b"
+#
+#  or define it inline:
+#
+#    "my-model": ModelEntry(
+#        local_name="my-model",
+#        repo_id="org/my-model",
+#        local_path="/data/models/my-model",    # ← checked first
+#    ),
+#
 # ═════════════════════════════════════════════════════════════════════════════
 
 MODEL_REGISTRY: dict[str, ModelEntry] = {
@@ -90,6 +122,15 @@ MODEL_REGISTRY: dict[str, ModelEntry] = {
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  DATASET REGISTRY — add new datasets here
+# ═════════════════════════════════════════════════════════════════════════════
+#
+#  To use a local dataset, set local_path:
+#
+#    DATASET_REGISTRY["gsm8k"].local_path = "/data/datasets/gsm8k"
+#
+#  The directory should contain split subdirectories (train/, test/, etc.)
+#  saved via HuggingFace datasets.save_to_disk().
+#
 # ═════════════════════════════════════════════════════════════════════════════
 
 DATASET_REGISTRY: dict[str, DatasetEntry] = {
@@ -180,16 +221,16 @@ DATASET_REGISTRY: dict[str, DatasetEntry] = {
 
 # ── Lookup helpers ────────────────────────────────────────────────────────────
 
-def _build_repo_to_local(
+def _build_repo_to_key(
     registry: dict[str, ModelEntry | DatasetEntry],
 ) -> dict[str, str]:
-    """Build a reverse mapping: repo_id → local_name."""
-    return {entry.repo_id: entry.local_name for entry in registry.values()}
+    """Build a reverse mapping: repo_id → registry key."""
+    return {entry.repo_id: key for key, entry in registry.items()}
 
 
-# Pre-built reverse maps (repo_id → local_name)
-REPO_TO_MODEL_LOCAL: dict[str, str] = _build_repo_to_local(MODEL_REGISTRY)
-REPO_TO_DATASET_LOCAL: dict[str, str] = _build_repo_to_local(DATASET_REGISTRY)
+# Pre-built reverse maps (repo_id → registry key)
+REPO_TO_MODEL_KEY: dict[str, str] = _build_repo_to_key(MODEL_REGISTRY)
+REPO_TO_DATASET_KEY: dict[str, str] = _build_repo_to_key(DATASET_REGISTRY)
 
 
 def get_model(name: str) -> ModelEntry:
@@ -204,14 +245,14 @@ def get_dataset(name: str) -> DatasetEntry:
 
 def find_model_by_repo(repo_id: str) -> ModelEntry | None:
     """Find a model entry by HuggingFace repo_id."""
-    local_name = REPO_TO_MODEL_LOCAL.get(repo_id)
-    return MODEL_REGISTRY.get(local_name) if local_name else None
+    key = REPO_TO_MODEL_KEY.get(repo_id)
+    return MODEL_REGISTRY.get(key) if key else None
 
 
 def find_dataset_by_repo(repo_id: str) -> DatasetEntry | None:
     """Find a dataset entry by HuggingFace repo_id."""
-    local_name = REPO_TO_DATASET_LOCAL.get(repo_id)
-    return DATASET_REGISTRY.get(local_name) if local_name else None
+    key = REPO_TO_DATASET_KEY.get(repo_id)
+    return DATASET_REGISTRY.get(key) if key else None
 
 
 def list_models() -> list[str]:
@@ -222,3 +263,23 @@ def list_models() -> list[str]:
 def list_datasets() -> list[str]:
     """Return all registered dataset local names."""
     return list(DATASET_REGISTRY.keys())
+
+
+def set_model_path(name: str, path: str) -> None:
+    """Override the local_path for a registered model at runtime.
+
+    Example::
+
+        set_model_path("llada-instruct", "/data/models/llada-8b")
+    """
+    MODEL_REGISTRY[name].local_path = path
+
+
+def set_dataset_path(name: str, path: str) -> None:
+    """Override the local_path for a registered dataset at runtime.
+
+    Example::
+
+        set_dataset_path("gsm8k", "/data/datasets/gsm8k")
+    """
+    DATASET_REGISTRY[name].local_path = path

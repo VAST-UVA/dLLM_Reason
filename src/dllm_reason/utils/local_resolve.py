@@ -1,21 +1,16 @@
 """Local-first resolution for models and datasets.
 
-Before fetching from HuggingFace Hub, check whether the resource has
-already been downloaded to the project's local directories:
+Resolution order (for both models and datasets):
+  1. ``entry.local_path``  — explicit user-specified path (highest priority)
+  2. ``<default_dir>/<local_name>/``  — project-relative convention
+     (checkpoints/<name> for models, datasets/<name>/<split> for datasets)
+  3. HuggingFace download  — remote fallback (lowest priority)
 
-  - Models:   checkpoints/<name>/   (by download_models.py)
-  - Datasets: datasets/<name>/<split>/  (by download_datasets.py, save_to_disk format)
-
-This avoids unnecessary network access when offline or when data is
-already available locally.
-
-Resource metadata (repo_id, local_name, etc.) is defined once in
-``resource_registry.py`` — not duplicated here.
+Resource metadata is defined in ``resource_registry.py``.
 
 Mirror support:
-  Set ``HF_MIRROR`` (e.g. ``https://hf-mirror.com``) to route all
-  HuggingFace downloads through a mirror.  Alternatively, set
-  ``HF_ENDPOINT`` directly.
+  Set ``HF_MIRROR`` (e.g. ``https://hf-mirror.com``) to auto-set
+  ``HF_ENDPOINT`` for all HuggingFace downloads.
 """
 
 from __future__ import annotations
@@ -27,8 +22,10 @@ from dllm_reason.utils.logging import get_logger
 from dllm_reason.utils.resource_registry import (
     DEFAULT_CHECKPOINTS_DIR,
     DEFAULT_DATASETS_DIR,
-    REPO_TO_MODEL_LOCAL,
-    REPO_TO_DATASET_LOCAL,
+    REPO_TO_MODEL_KEY,
+    REPO_TO_DATASET_KEY,
+    MODEL_REGISTRY,
+    DATASET_REGISTRY,
 )
 
 logger = get_logger(__name__)
@@ -74,36 +71,54 @@ def resolve_model_path(
     model_id: str,
     checkpoints_dir: str | Path | None = None,
 ) -> str:
-    """Return a local checkpoint path if it exists, otherwise return *model_id* as-is.
+    """Resolve a model identifier to a loadable path.
 
-    Lookup order:
-      1. *model_id* is already a local directory → use directly.
-      2. ``checkpoints/<local_name>/`` exists and is non-empty → use it.
-      3. Return *model_id* unchanged (triggers HuggingFace download).
+    Resolution order:
+      1. ``model_id`` is already a local directory → use directly.
+      2. Registry ``local_path`` is set and exists → use it.
+      3. ``checkpoints/<local_name>/`` exists (non-empty) → use it.
+      4. Return ``model_id`` unchanged (triggers HuggingFace download).
+
+    Args:
+        model_id: HuggingFace repo ID or local path.
+        checkpoints_dir: Override for the checkpoints base directory.
+
+    Returns:
+        Local path string if available, otherwise the original model_id.
     """
-    # Already a local path
+    # 1. Already a local path that exists
     if Path(model_id).is_dir():
         logger.info(f"Model path is already local: {model_id}")
         return model_id
 
-    # Resolve via registry (repo_id → local_name)
-    local_name = REPO_TO_MODEL_LOCAL.get(model_id)
-    if local_name is None:
-        # Heuristic: "org/model-name" → try "model-name"
-        if "/" in model_id:
-            local_name = model_id.split("/")[-1].lower().replace("_", "-")
+    # Look up registry entry
+    key = REPO_TO_MODEL_KEY.get(model_id)
+    entry = MODEL_REGISTRY.get(key) if key else None
+
+    # 2. Explicit local_path from registry
+    if entry and entry.local_path:
+        p = Path(entry.local_path)
+        if p.is_dir() and any(p.iterdir()):
+            logger.info(f"Using registry local_path: {p}")
+            return str(p)
         else:
-            return model_id
+            logger.warning(f"Registry local_path not found: {p}, trying defaults")
 
-    ckpt_dir = Path(checkpoints_dir) if checkpoints_dir else DEFAULT_CHECKPOINTS_DIR
-    local_path = ckpt_dir / local_name
+    # 3. Default checkpoints/<local_name>/
+    local_name = entry.local_name if entry else None
+    if local_name is None and "/" in model_id:
+        local_name = model_id.split("/")[-1].lower().replace("_", "-")
 
-    if local_path.is_dir() and any(local_path.iterdir()):
-        logger.info(f"Found local checkpoint: {local_path}  (skipping download)")
-        return str(local_path)
+    if local_name:
+        ckpt_dir = Path(checkpoints_dir) if checkpoints_dir else DEFAULT_CHECKPOINTS_DIR
+        local_path = ckpt_dir / local_name
+        if local_path.is_dir() and any(local_path.iterdir()):
+            logger.info(f"Found local checkpoint: {local_path}")
+            return str(local_path)
 
+    # 4. Fallback: will download from HuggingFace
     _ensure_mirror()
-    logger.info(f"No local checkpoint at {local_path}, will download from {model_id}")
+    logger.info(f"No local model found, will download from {model_id}")
     return model_id
 
 
@@ -115,24 +130,48 @@ def resolve_dataset(
     split: str = "train",
     datasets_dir: str | Path | None = None,
 ):
-    """Load a dataset locally if available, otherwise fall back to HuggingFace.
+    """Load a dataset, checking local paths before downloading.
 
-    Checks ``datasets/<local_name>/<split>/`` for a ``save_to_disk()``
-    snapshot.  If found, loads with ``load_from_disk()``.  Otherwise
-    downloads via ``load_dataset()`` (mirror auto-applied if configured).
+    Resolution order:
+      1. Registry ``local_path/<split>/`` has ``dataset_info.json`` → load_from_disk.
+      2. ``datasets/<local_name>/<split>/`` has ``dataset_info.json`` → load_from_disk.
+      3. HuggingFace ``load_dataset()`` (remote fallback).
+
+    Args:
+        repo_id:  HuggingFace dataset repo ID.
+        config:   Dataset config / subset name.
+        split:    Split to load.
+        datasets_dir: Override for the datasets base directory.
+
+    Returns:
+        A HuggingFace ``Dataset`` object.
     """
     from datasets import load_dataset, load_from_disk
 
-    local_name = REPO_TO_DATASET_LOCAL.get(repo_id)
+    # Look up registry entry
+    key = REPO_TO_DATASET_KEY.get(repo_id)
+    entry = DATASET_REGISTRY.get(key) if key else None
+
     ds_dir = Path(datasets_dir) if datasets_dir else DEFAULT_DATASETS_DIR
 
+    # 1. Explicit local_path from registry
+    if entry and entry.local_path:
+        split_dir = Path(entry.local_path) / split
+        if (split_dir / "dataset_info.json").exists():
+            logger.info(f"Loading dataset from registry local_path: {split_dir}")
+            return load_from_disk(str(split_dir))
+        else:
+            logger.debug(f"Registry local_path split not found: {split_dir}")
+
+    # 2. Default datasets/<local_name>/<split>/
+    local_name = entry.local_name if entry else None
     if local_name:
         split_dir = ds_dir / local_name / split
         if (split_dir / "dataset_info.json").exists():
             logger.info(f"Loading dataset from local: {split_dir}")
             return load_from_disk(str(split_dir))
 
-    # Fallback: download from HuggingFace
+    # 3. Fallback: download from HuggingFace
     _ensure_mirror()
     logger.info(f"Local dataset not found, downloading: {repo_id} (split={split})")
     if config:
