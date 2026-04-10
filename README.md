@@ -218,10 +218,19 @@ curl -X POST http://localhost:8000/generate \
   -H "Content-Type: application/json" \
   -d '{"prompt": "What is 7*8?", "strategy": "adaptive_dynamic", "max_new_tokens": 256}'
 
-# List strategies
-curl http://localhost:8000/strategies
+# Batch generate (multiple prompts, single strategy)
+curl -X POST http://localhost:8000/batch_generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompts": ["What is 7*8?", "What is 12+15?"], "strategy": "cot"}'
 
-# Health check
+# Hot-swap model (e.g. after fine-tuning)
+curl -X POST http://localhost:8000/switch_model \
+  -H "Content-Type: application/json" \
+  -d '{"model_id": "checkpoints/sft-math"}'
+
+# Model info / list strategies / health check
+curl http://localhost:8000/info
+curl http://localhost:8000/strategies
 curl http://localhost:8000/health
 ```
 
@@ -351,6 +360,104 @@ python scripts/learn_from_episodes.py \
 | `sft` | correct only | Cross-entropy | Fast, clean data |
 | `grpo` | all evaluated | GRPO group advantage | Contrastive (correct vs wrong) |
 | `diffppo` | all evaluated | PPO clip + step controller | Accuracy + inference speed Pareto |
+
+### Research Pipeline (3-Stage Example)
+
+End-to-end: baseline evaluation → DAG discovery → DAG-aware training.
+All inference goes through the FastAPI server; training runs locally.
+
+```bash
+# ── Step 1: Start the inference server ──
+python scripts/serve.py --model_id GSAI-ML/LLaDA-8B-Instruct
+
+# ── Step 2: Run the full 3-stage pipeline (one command) ──
+bash scripts/runs/example_pipeline.sh
+
+# Or call the Python script directly:
+python scripts/run_research_pipeline.py \
+    --stages 1 2 3 \
+    --datasets gsm8k \
+    --num_samples 200
+```
+
+#### Running Individual Stages
+
+```bash
+# Stage 1 only — baseline evaluation with multiple schedulers
+python scripts/run_research_pipeline.py \
+    --stages 1 \
+    --datasets gsm8k math \
+    --s1_schedulers confidence cot skeleton bidirectional answer_first \
+    --num_samples 500
+
+# Stage 2 only — find best DAG template per prompt
+python scripts/run_research_pipeline.py \
+    --stages 2 \
+    --datasets gsm8k \
+    --s2_strategies confidence cot skeleton bidirectional answer_first linear random \
+    --num_samples 200
+
+# Stage 3 only — train with DAG bias (reuses Stage 2 results)
+python scripts/run_research_pipeline.py \
+    --stages 3 \
+    --s3_mode sft \
+    --s3_dag_mode per_template \
+    --dag_bias_strength 0.5 \
+    --run_dir runs/research_20260410   # point to existing Stage 2 output
+```
+
+#### Key Options
+
+| Parameter | Default | Choices | Description |
+|-----------|---------|---------|-------------|
+| `--stages` | `1 2 3` | any subset | Which stages to run |
+| `--datasets` | `gsm8k` | gsm8k, math, arc, prontoqa | Evaluation datasets |
+| `--num_samples` | `200` | int or -1 (all) | Samples per dataset |
+| `--s1_schedulers` | `confidence` | all 13 schedulers | Schedulers for baseline |
+| `--s2_method` | `sweep` | sweep, search | DAG discovery method |
+| `--s3_mode` | `sft` | sft, grpo, diffppo, unmask_rl | Training algorithm |
+| `--s3_dag_mode` | `per_template` | per_template, consensus, none | DAG injection mode |
+| `--dag_bias_strength` | `0.5` | 0.0–1.0 | How strongly DAG biases masking |
+| `--resume` | off | flag | Skip completed sub-tasks |
+| `--dry_run` | off | flag | Print config without running |
+
+Full option list: `python scripts/run_research_pipeline.py --help`
+All ablation dimensions: [`docs/ABLATION_SETTINGS.md`](docs/ABLATION_SETTINGS.md)
+
+#### Ablation Experiments
+
+```bash
+# Run all pre-configured ablation experiments
+python scripts/run_ablation.py
+
+# Run specific ablations
+python scripts/run_ablation.py --experiments scheduler_compare sft_per_template sft_no_dag
+
+# Dry run — list all available experiments
+python scripts/run_ablation.py --dry_run
+```
+
+#### Extending with Custom Strategies
+
+To add a new unmasking scheduler:
+
+1. Create `src/dllm_reason/scheduler/my_scheduler.py` implementing `UnmaskingScheduler`
+2. Register it in `scripts/serve.py`'s `AVAILABLE_STRATEGIES` list and `build_scheduler()` function
+3. Use it: `--s1_schedulers my_scheduler` or `--s2_strategies my_scheduler`
+
+To add a new DAG template:
+
+1. Add a builder function in `src/dllm_reason/graph/templates.py`
+2. Register it in `_TEMPLATE_BUILDERS` dict
+3. It becomes available automatically in Stage 2 search mode
+
+To add a new training mode:
+
+1. Implement the training loop in `scripts/learn_from_episodes.py`
+2. Add the mode branch in `run_research_pipeline.py`'s `_train_single()` function
+3. Use it: `--s3_mode my_mode`
+
+---
 
 ### LaTeX Table Generation
 
@@ -623,8 +730,10 @@ All configs use YAML + Hydra/OmegaConf.
 ## Documentation
 
 - **[Tutorial: pip install + all-strategies evaluation](docs/tutorial_eval_all_strategies.md)**
+- **[Ablation Settings: all dimensions & experiment presets](docs/ABLATION_SETTINGS.md)**
 - **[Deployment Guide: REST API, Docker, quantization](docs/deployment.md)**
 - **[API Reference](docs/API_REFERENCE.md)**
+- **[Feature Manual (EN)](docs/FEATURE_MANUAL.md)** · **[功能手册 (ZH)](docs/FEATURE_MANUAL.zh.md)**
 - **[References: all cited papers](docs/REFERENCES.md)** · also at [REFERENCES.md](REFERENCES.md)
 - **[Version History](docs/V1.0_RELEASE.md)**
 

@@ -268,13 +268,14 @@ dllm-eval-dags --model mdlm --benchmark gsm8k --dag_dir <dir>
 
 ### 9.1 FastAPI 服务（`scripts/serve.py`）
 
-- 启动：`dllm-serve --model mdlm --port 8000`
+- 启动：`dllm-serve --model_id GSAI-ML/LLaDA-8B-Instruct --port 8000`
 - 端点：
-  - `POST /generate` — 生成
-  - `POST /switch_strategy` — 热切换 scheduler
+  - `POST /generate` — 单条生成
+  - `POST /batch_generate` — 批量生成（多条 prompt，同一 strategy）
+  - `POST /switch_model` — 热切换模型（例如训练后重新加载）
   - `GET /strategies` — 列出可用 scheduler
-  - `POST /switch_dag` — 热切换 DAG
-  - `GET /health`
+  - `GET /info` — 模型信息（id, device, dtype）
+  - `GET /health` — 健康检查
 
 ### 9.2 Web UI（`scripts/webui.py`）
 
@@ -337,6 +338,76 @@ dllm-run-pipeline \
   --rl_algo diffu_grpo \
   --output_dir runs/exp1
 ```
+
+---
+
+## 11b. Research Pipeline（`scripts/run_research_pipeline.py`）
+
+三阶段研究管线：baseline 评估 → DAG 发现 → DAG-aware 训练。推理走 FastAPI server，训练本地执行。
+
+### 快速开始
+
+```bash
+# 启动 server
+python scripts/serve.py --model_id GSAI-ML/LLaDA-8B-Instruct
+
+# 一键跑完 3 个 stage
+bash scripts/runs/example_pipeline.sh
+
+# 或直接调用
+python scripts/run_research_pipeline.py --stages 1 2 3 --datasets gsm8k --num_samples 200
+```
+
+### 单独跑各 Stage
+
+```bash
+# Stage 1: baseline 评估（多 scheduler 对比）
+python scripts/run_research_pipeline.py --stages 1 \
+    --datasets gsm8k math \
+    --s1_schedulers confidence cot skeleton bidirectional answer_first
+
+# Stage 2: DAG 发现（每条 prompt 找最优模板）
+python scripts/run_research_pipeline.py --stages 2 \
+    --datasets gsm8k \
+    --s2_strategies confidence cot skeleton bidirectional answer_first linear random
+
+# Stage 3: DAG-aware 训练（复用 Stage 2 结果）
+python scripts/run_research_pipeline.py --stages 3 \
+    --s3_mode sft --s3_dag_mode per_template --dag_bias_strength 0.5 \
+    --run_dir runs/research_YYYYMMDD
+```
+
+### 关键选项
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--stages` | `1 2 3` | 运行哪些 stage |
+| `--datasets` | `gsm8k` | 数据集（gsm8k, math, arc, prontoqa） |
+| `--num_samples` | `200` | 每个数据集取样数（-1=全量） |
+| `--s1_schedulers` | `confidence` | Stage 1 评估的 scheduler（共 13 个可选） |
+| `--s2_method` | `sweep` | DAG 发现方法（sweep=模板全试, search=逐 prompt 搜索） |
+| `--s3_mode` | `sft` | 训练模式（sft, grpo, diffppo, unmask_rl） |
+| `--s3_dag_mode` | `per_template` | DAG 注入模式（per_template, consensus, none） |
+| `--dag_bias_strength` | `0.5` | DAG 偏置强度（0.0~1.0） |
+| `--resume` | 关 | 断点续跑 |
+| `--dry_run` | 关 | 只打印配置 |
+
+完整选项：`python scripts/run_research_pipeline.py --help`
+消融维度：[`docs/ABLATION_SETTINGS.md`](ABLATION_SETTINGS.md)
+
+### 消融实验
+
+```bash
+python scripts/run_ablation.py --dry_run                     # 列出所有实验
+python scripts/run_ablation.py --experiments scheduler_compare  # 跑指定实验
+```
+
+### 扩展
+
+- **新 scheduler**：实现 `UnmaskingScheduler`，注册到 `serve.py` 的 `build_scheduler()` 和 `AVAILABLE_STRATEGIES`
+- **新 DAG 模板**：在 `src/dllm_reason/graph/templates.py` 的 `_TEMPLATE_BUILDERS` 中注册
+- **新训练模式**：在 `learn_from_episodes.py` 中实现循环，在 `run_research_pipeline.py` 的 `_train_single()` 中加分支
+- **新数据集**：在 `src/dllm_reason/data/reasoning_datasets.py` 的 `DATASET_LOADERS` 中注册
 
 ---
 

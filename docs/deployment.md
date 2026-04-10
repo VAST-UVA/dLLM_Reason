@@ -26,12 +26,15 @@ dllm-serve --model_id checkpoints/llada-instruct
 python scripts/serve.py --model_id checkpoints/llada-instruct
 ```
 
-The server exposes three endpoints:
+The server exposes six endpoints:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/generate` | POST | Generate text with a given unmasking strategy |
+| `/batch_generate` | POST | Batch generate (multiple prompts, single strategy) |
+| `/switch_model` | POST | Hot-swap the loaded model (e.g. after fine-tuning) |
 | `/strategies` | GET | List all 13 available strategies |
+| `/info` | GET | Model info (model_id, device, dtype) |
 | `/health` | GET | Health check (model status, device info) |
 
 ---
@@ -111,6 +114,39 @@ done
 | `temperature` | float | 0.0 | Sampling temperature (0=greedy) |
 | `cfg_scale` | float | 0.0 | Classifier-free guidance (0=disabled) |
 | `remasking` | string | `"low_confidence"` | Remasking strategy |
+
+### Batch generate
+
+Send multiple prompts in one request (same strategy for all):
+
+```bash
+curl -X POST http://localhost:8000/batch_generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompts": ["What is 7*8?", "What is 12+15?", "Solve 3x=9"],
+    "strategy": "cot",
+    "max_new_tokens": 128
+  }'
+```
+
+Returns a JSON array of `GenerateResponse` objects (same schema as `/generate`).
+
+### Switch model
+
+Hot-swap the loaded model without restarting the server:
+
+```bash
+curl -X POST http://localhost:8000/switch_model \
+  -H "Content-Type: application/json" \
+  -d '{"model_id": "checkpoints/sft-math", "torch_dtype": "bfloat16"}'
+```
+
+### Model info
+
+```bash
+curl http://localhost:8000/info
+# {"status": "ready", "model_id": "GSAI-ML/LLaDA-8B-Instruct", "device": "cuda:0", ...}
+```
 
 ---
 

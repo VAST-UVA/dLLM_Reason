@@ -266,10 +266,19 @@ curl -X POST http://localhost:8000/generate \
   -H "Content-Type: application/json" \
   -d '{"prompt":"What is 7*8?","strategy":"confidence","max_new_tokens":128}'
 
-# List strategies
-curl http://localhost:8000/strategies
+# Batch generate (multiple prompts)
+curl -X POST http://localhost:8000/batch_generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompts":["What is 7*8?","What is 12+15?"],"strategy":"cot"}'
 
-# Health check
+# Hot-swap model (e.g. after fine-tuning)
+curl -X POST http://localhost:8000/switch_model \
+  -H "Content-Type: application/json" \
+  -d '{"model_id":"checkpoints/sft-math"}'
+
+# Model info / list strategies / health check
+curl http://localhost:8000/info
+curl http://localhost:8000/strategies
 curl http://localhost:8000/health
 ```
 
@@ -284,6 +293,14 @@ r = requests.post("http://localhost:8000/generate", json={
     "max_new_tokens": 256,
 })
 print(r.json()["text"])
+
+# Batch generate
+r = requests.post("http://localhost:8000/batch_generate", json={
+    "prompts": ["What is 7*8?", "What is 12+15?"],
+    "strategy": "cot",
+})
+for resp in r.json():
+    print(resp["text"])
 ```
 
 ---
