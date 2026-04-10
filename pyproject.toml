@@ -5,6 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "dllm-reason"
 version = "1.5.1"
+
 description = "DAG-guided discrete diffusion language models for reasoning"
 readme = "README.md"
 license = { file = "LICENSE" }
