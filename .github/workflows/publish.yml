@@ -9,6 +9,8 @@ jobs:
   build-and-publish:
     name: Build & Publish
     runs-on: ubuntu-latest
+    # Only publish from the canonical repo; forks/mirrors (e.g. VAST-UVA) skip.
+    if: github.repository == 'BDeMo/dLLM_Reason'
     environment: pypi          # set up this environment in GitHub repo settings
     permissions:
       id-token: write          # required for PyPI trusted publishing (OIDC)
