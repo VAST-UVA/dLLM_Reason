@@ -1,6 +1,6 @@
 # dLLM-Reason Feature Manual
 
-> Version: v1.4.3  |  Last updated: 2026-04-09  |  Language: English  |  中文: [FEATURE_MANUAL.zh.md](FEATURE_MANUAL.zh.md)
+> Version: v1.5.0  |  Last updated: 2026-04-09  |  Language: English  |  中文: [FEATURE_MANUAL.zh.md](FEATURE_MANUAL.zh.md)
 
 ## 0. Project Overview
 
@@ -268,13 +268,14 @@ dllm-eval-dags --model mdlm --benchmark gsm8k --dag_dir <dir>
 
 ### 9.1 FastAPI service (`scripts/serve.py`)
 
-- Launch: `dllm-serve --model mdlm --port 8000`
+- Launch: `dllm-serve --model_id GSAI-ML/LLaDA-8B-Instruct --port 8000`
 - Endpoints:
-  - `POST /generate` — generate text
-  - `POST /switch_strategy` — hot-swap the scheduler
+  - `POST /generate` — generate text with a given strategy
+  - `POST /batch_generate` — batch generate (multiple prompts, single strategy)
+  - `POST /switch_model` — hot-swap the loaded model (e.g. after fine-tuning)
   - `GET /strategies` — list available schedulers
-  - `POST /switch_dag` — hot-swap the DAG
-  - `GET /health`
+  - `GET /info` — model info (id, device, dtype)
+  - `GET /health` — health check
 
 ### 9.2 Web UI (`scripts/webui.py`)
 
@@ -337,6 +338,116 @@ dllm-run-pipeline \
   --rl_algo diffu_grpo \
   --output_dir runs/exp1
 ```
+
+---
+
+## 11b. Research Pipeline (`scripts/run_research_pipeline.py`)
+
+A 3-stage research pipeline for DAG-guided reasoning experiments. Inference goes through the FastAPI server (`serve.py`); training runs locally.
+
+### Architecture
+
+```
+  FastAPI Server (serve.py)           Pipeline Client (run_research_pipeline.py)
+  ┌─────────────────────────┐         ┌──────────────────────────────────────────┐
+  │  LLaDA model on GPU     │◄─HTTP──│  Stage 1: baseline eval (API batch)      │
+  │  /batch_generate        │         │  Stage 2: DAG discovery (API sweep)      │
+  │  /switch_model          │         │  Stage 3: DAG-aware training (local GPU) │
+  │  /info                  │         └──────────────────────────────────────────┘
+  └─────────────────────────┘
+```
+
+### Running the Pipeline
+
+```bash
+# Start server
+python scripts/serve.py --model_id GSAI-ML/LLaDA-8B-Instruct
+
+# Full pipeline (shell script)
+bash scripts/runs/example_pipeline.sh
+
+# Or directly:
+python scripts/run_research_pipeline.py --stages 1 2 3 --datasets gsm8k --num_samples 200
+```
+
+### Running Individual Stages
+
+```bash
+# Stage 1: baseline evaluation
+python scripts/run_research_pipeline.py --stages 1 \
+    --datasets gsm8k math \
+    --s1_schedulers confidence cot skeleton bidirectional answer_first
+
+# Stage 2: DAG discovery (find best template per prompt)
+python scripts/run_research_pipeline.py --stages 2 \
+    --datasets gsm8k \
+    --s2_strategies confidence cot skeleton bidirectional answer_first linear random
+
+# Stage 3: DAG-aware training
+python scripts/run_research_pipeline.py --stages 3 \
+    --s3_mode sft --s3_dag_mode per_template --dag_bias_strength 0.5 \
+    --run_dir runs/research_YYYYMMDD   # point to existing Stage 2 output
+```
+
+### All Options
+
+**Inference** (Stage 1 & 2):
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--gen_length` | 128 | Generation length (64, 128, 256, 512) |
+| `--num_steps` | 128 | Diffusion steps (32, 64, 128, 256) |
+| `--block_length` | 32 | Block size (8, 16, 32, 64) |
+| `--temperature` | 0.0 | Sampling temperature (0.0=greedy) |
+| `--api_batch_size` | 4 | Prompts per API call |
+
+**Stage 1** — Baseline:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--s1_schedulers` | confidence | Schedulers to evaluate (all 13 available) |
+
+**Stage 2** — Discovery:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--s2_strategies` | 7 strategies | Templates to sweep per prompt |
+| `--s2_method` | sweep | `sweep` (all templates) or `search` (per-prompt) |
+| `--s2_search_method` | greedy | Search algorithm: greedy, evolutionary, rl_policy, differentiable |
+| `--s2_search_budget` | 50 | Evaluations per prompt (search mode only) |
+
+**Stage 3** — Training:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--s3_mode` | sft | Training: sft, grpo, diffppo, unmask_rl |
+| `--s3_dag_mode` | per_template | DAG injection: per_template, consensus, none |
+| `--dag_bias_strength` | 0.5 | DAG bias (0.0=none, 1.0=full) |
+| `--epochs` | 3 | Training epochs |
+| `--lr` | 1e-5 | Learning rate |
+| `--kl_coeff` | 0.01 | KL penalty (grpo/diffppo) |
+| `--train_sampler` | off | Joint step-budget controller (diffppo) |
+| `--unmask_d_model` | 64 | Policy net size (unmask_rl) |
+
+### Ablation Experiments
+
+Pre-configured experiments in `scripts/run_ablation.py` (see [`docs/ABLATION_SETTINGS.md`](ABLATION_SETTINGS.md)):
+
+```bash
+python scripts/run_ablation.py --dry_run             # list all experiments
+python scripts/run_ablation.py --experiments scheduler_compare
+python scripts/run_ablation.py --experiments sft_per_template sft_no_dag
+```
+
+### Extending
+
+**Add a scheduler**: implement `UnmaskingScheduler` in `src/dllm_reason/scheduler/`, register in `serve.py`'s `build_scheduler()` and `AVAILABLE_STRATEGIES`.
+
+**Add a DAG template**: add builder function in `src/dllm_reason/graph/templates.py`, register in `_TEMPLATE_BUILDERS`.
+
+**Add a training mode**: implement the loop in `scripts/learn_from_episodes.py`, add branch in `run_research_pipeline.py`'s `_train_single()`.
+
+**Add a dataset**: implement loader in `src/dllm_reason/data/reasoning_datasets.py`, register in `DATASET_LOADERS`.
 
 ---
 
@@ -423,7 +534,8 @@ eval/reasoning_eval.py    ──→ scripts/evaluate.py, eval_dags.py
 - **v1.4.0** — Episode Pipeline + DAG Library + 4 search methods
 - **v1.4.1** — Training CLI enhancements (`--name` argument)
 - **v1.4.2** — 5-stage `run_pipeline.py` + new CLI scripts
-- **v1.4.3** — 11 critical bug-audit fixes, `TokenDAG.empty()` → `no_edges()` rename, `'empty'` template/strategy removed (subsumed by `random`), bilingual manual (EN default + ZH)
+- **v1.4.3** — Bug fixes (`empty()` rename), `publish.yml` repo guard
+- **v1.5.0** — Research pipeline (`run_research_pipeline.py`), ablation runner (`run_ablation.py`), batch inference API, model hot-swap
 
 ---
 

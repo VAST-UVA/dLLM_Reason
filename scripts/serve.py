@@ -8,9 +8,12 @@ Usage:
     python scripts/serve.py --model_id checkpoints/llada-instruct --quantize 4bit
 
 API endpoints:
-    POST /generate    — generate text with a given strategy
-    GET  /strategies  — list available strategies
-    GET  /health      — health check
+    POST /generate        — generate text with a given strategy
+    POST /batch_generate  — batch generate (multiple prompts, single strategy)
+    POST /switch_model    — hot-swap the loaded model
+    GET  /strategies      — list available strategies
+    GET  /info            — model info (id, device, dtype)
+    GET  /health          — health check
 """
 
 import argparse
@@ -154,6 +157,128 @@ def generate(req: GenerateRequest):
         elapsed_seconds=round(elapsed, 3),
         num_tokens=len(text.split()),
     )
+
+
+# ── Batch generation ─────────────────────────────────────────────────────────
+
+
+class BatchGenerateRequest(BaseModel):
+    prompts: list[str]
+    strategy: str = Field(default="confidence", description="Unmasking strategy")
+    max_new_tokens: int = Field(default=128, ge=1, le=2048)
+    num_steps: int = Field(default=128, ge=1, le=1024)
+    block_length: int = Field(default=32, ge=1, le=512)
+    temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    cfg_scale: float = Field(default=0.0, ge=0.0, le=10.0)
+    remasking: str = Field(default="low_confidence")
+
+
+@app.post("/batch_generate", response_model=list[GenerateResponse])
+def batch_generate(req: BatchGenerateRequest):
+    """Generate text for multiple prompts with a single strategy.
+
+    Currently iterates prompts sequentially (each prompt gets its own
+    scheduler instance). True batch inference (stacking into a single
+    (B, L) tensor) can be added later as an optimisation.
+    """
+    if _model is None:
+        raise HTTPException(500, "Model not loaded")
+    if req.strategy not in AVAILABLE_STRATEGIES:
+        raise HTTPException(400, f"Unknown strategy: {req.strategy}. Available: {AVAILABLE_STRATEGIES}")
+
+    results: list[GenerateResponse] = []
+    for prompt in req.prompts:
+        scheduler = build_scheduler(
+            req.strategy, req.max_new_tokens, req.block_length, _model.device,
+        )
+        t0 = time.time()
+        text = _model.generate(
+            prompt=prompt,
+            generation_len=req.max_new_tokens,
+            block_length=req.block_length,
+            scheduler=scheduler,
+            num_steps=req.num_steps,
+            temperature=req.temperature,
+            cfg_scale=req.cfg_scale,
+            remasking=req.remasking,
+        )
+        elapsed = time.time() - t0
+        results.append(GenerateResponse(
+            text=text,
+            strategy=req.strategy,
+            elapsed_seconds=round(elapsed, 3),
+            num_tokens=len(text.split()),
+        ))
+    return results
+
+
+# ── Model hot-swap ───────────────────────────────────────────────────────────
+
+
+class SwitchModelRequest(BaseModel):
+    model_id: str
+    torch_dtype: str = Field(default="bfloat16")
+    quantize: str | None = Field(default=None, description="4bit or 8bit")
+
+
+@app.post("/switch_model")
+def switch_model(req: SwitchModelRequest):
+    """Hot-swap the loaded model (e.g. after fine-tuning Stage 3)."""
+    global _model, _model_id
+
+    dtype_map = {
+        "bfloat16": torch.bfloat16,
+        "float16": torch.float16,
+        "float32": torch.float32,
+    }
+
+    # Free current model
+    if _model is not None:
+        del _model
+        torch.cuda.empty_cache()
+
+    quant_config = None
+    if req.quantize == "4bit":
+        from transformers import BitsAndBytesConfig
+        quant_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=dtype_map.get(req.torch_dtype, torch.bfloat16),
+            bnb_4bit_quant_type="nf4",
+        )
+    elif req.quantize == "8bit":
+        from transformers import BitsAndBytesConfig
+        quant_config = BitsAndBytesConfig(load_in_8bit=True)
+
+    from dllm_reason.models.llada import LLaDAWrapper
+    _model = LLaDAWrapper(
+        model_id=req.model_id,
+        torch_dtype=dtype_map.get(req.torch_dtype, torch.bfloat16),
+        device_map="auto",
+        quantization_config=quant_config,
+    )
+    _model_id = req.model_id
+
+    return {
+        "status": "ok",
+        "model_id": _model_id,
+        "device": str(_model.device),
+    }
+
+
+# ── Model info ───────────────────────────────────────────────────────────────
+
+
+@app.get("/info")
+def info():
+    """Return current model metadata (used by pipeline for health check)."""
+    if _model is None:
+        return {"status": "no_model", "model_id": None}
+    return {
+        "status": "ready",
+        "model_id": _model_id,
+        "device": str(_model.device),
+        "dtype": str(getattr(_model, "torch_dtype", "unknown")),
+    }
 
 
 def main():
